@@ -106,7 +106,7 @@ namespace OKDPlayer
             OKDPlayback[] playbacks = okd.GetPTrackPlaybacks();
            
 
-            Console.WriteLine("Starting playback... Press Enter to stop playback, Up/Down arrows to change speed, PageUp/PageDown to transpose.");
+            
             foreach (var playback in playbacks)
             {
                 playback.Play(masterClock);
@@ -114,7 +114,14 @@ namespace OKDPlayer
             }
             masterClock.Start();
 
+            //For spinner effect
+            ConsoleSpinner spinner = new ConsoleSpinner();
+            bool firstShow = false;
+            int totalPlayTimeSec = (int)(okd.TotalPlayTime / 1000);
+            int totalPlayTimeMin = totalPlayTimeSec / 60;
+            int totalPlayTimeSecRemainder = totalPlayTimeSec % 60;
             //wait for playback to finish
+
             while (playbacks.Any(p => p.IsPlaying))
             {
                 //check key input
@@ -124,9 +131,9 @@ namespace OKDPlayer
                     if (key == ConsoleKey.Enter)
                     {
                         //Stop all playbacks
+                        Console.WriteLine($"Stopping playback...");
                         foreach (var playback in playbacks.Where(p => p.IsPlaying))
-                        {
-                            Console.WriteLine($"Stopping playback...");
+                        {                           
                             playback.Stop();
                             masterClock.Stop();
                             playback.MidiDevice.StopAllSound();
@@ -139,7 +146,7 @@ namespace OKDPlayer
                         //speed up
                         
                         masterClock.SpeedRatio += 0.1f; // Increase speed by 10%
-                        Console.WriteLine($"Playback speed set to {masterClock.SpeedRatio}");
+                        Console.WriteLine($"Playback speed set to {masterClock.SpeedRatio:F1}");
                     }
                     else if (key == ConsoleKey.DownArrow)
                     {
@@ -148,12 +155,12 @@ namespace OKDPlayer
                         if (masterClock.SpeedRatio <= 0.1f)
                             continue; // Don't allow speed to go below 0.1
                         masterClock.SpeedRatio -= 0.1f; // Decrease speed by 10%, but not below 0.1
-                        Console.WriteLine($"Playback speed set to {masterClock.SpeedRatio}");
+                        Console.WriteLine($"Playback speed set to {masterClock.SpeedRatio:F1}");
                     }
                     else if(key == ConsoleKey.LeftArrow)
                     {
                         Console.WriteLine($"Seeking backward 10 seconds.");
-                        masterClock.Seek(-10000);
+                        masterClock.Seek(Math.Max(okd.FirstNoteONTime - 20, masterClock.CurrentVirtualTime + -10000) - masterClock.CurrentVirtualTime);
                         foreach (var playback in playbacks.Where(p => p.IsPlaying))
                         {
                             playback.MidiDevice.StopAllSound();
@@ -180,18 +187,56 @@ namespace OKDPlayer
                         okd.Transpose(transposeKey);
                         Console.WriteLine($"Transposing down: {transposeKey} semitones");
                     }
+                    else if (key == ConsoleKey.P)
+                    {
+                       if(masterClock.IsPlaybackPaused)
+                        {
+                            masterClock.Resume();
+                            Console.WriteLine("Playback resumed.         ");
+                        }
+                        else
+                        {
+                            masterClock.Pause();
+                            foreach (var playback in playbacks.Where(p => p.IsPlaying))
+                            {
+                                playback.MidiDevice.StopAllSound();
+                            }
+                            Console.WriteLine("Playback paused.         ");
+                        }
+                        
+                    }
 
                 }
-                int totalSeconds = (int)(masterClock.CurrentVirtualTime / 1000);
+                
+                int totalSeconds = (int)((masterClock.CurrentVirtualTime - okd.FirstNoteONTime)/ 1000);
                 int minutes = totalSeconds / 60;
                 int seconds = totalSeconds % 60;
 
-                Console.WriteLine($"-> Playing.. {minutes:D2}:{seconds:D2}");
-                Console.SetCursorPosition(0, Console.CursorTop - 1); 
+                if(totalSeconds < 0)
+                {
+                    spinner.Turn($"Track setup in progress.. ", 0);
+                }
+                else
+                {
+                    if (!firstShow)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine("Starting playback... Press Enter to stop playback, Up/Down arrows to change speed, PageUp/PageDown to transpose.");
+                        firstShow = true;
+                    }
+                    Console.WriteLine($"-> Playing.. {minutes:D2}:{seconds:D2}/{totalPlayTimeMin:D2}:{totalPlayTimeSecRemainder:D2}");
+                    Console.SetCursorPosition(0, Console.CursorTop - 1);
+                }
+                
+                
                 Thread.Sleep(100);
             }
 
-           
+            //Stop hanging notes
+            foreach (var playback in playbacks.Where(p => p.IsPlaying))
+            {
+                playback.MidiDevice.StopAllSound();
+            }
         }
     }
 }

@@ -125,7 +125,7 @@ namespace OKDPlayer
                                 }
                                 else
                                     MidiDevice.Device.SendSysEx(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData);
-                                Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- SysEx event: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
+                                //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- SysEx event: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
                             }
                             else if (status == 0xFA) { } //TODO for adpcm
                             else if (status == 0xFD) { } //skip FD

@@ -11,7 +11,7 @@ public class MasterClock
     private readonly object _lock = new object();
 
     private double _speedRatio = 1.0;
-    private bool _isPaused = false;
+    public bool IsPlaybackPaused { get; private set; } = false;
     private CancellationTokenSource _cancellationTokenSource;
 
     private long _cumulativeVirtualTime = 0;
@@ -57,12 +57,12 @@ public class MasterClock
 
     public void Pause()
     {
-        lock (_lock) _isPaused = true;
+        lock (_lock) IsPlaybackPaused = true;
     }
 
     public void Resume()
     {
-        lock (_lock) _isPaused = false;
+        lock (_lock) IsPlaybackPaused = false;
     }
 
 
@@ -90,7 +90,7 @@ public class MasterClock
             //Pause
             lock (_lock)
             {
-                if (_isPaused)
+                if (IsPlaybackPaused)
                 {
                     _lastActualElapsedTime = _stopwatch.ElapsedMilliseconds;
                     Thread.Sleep(100);

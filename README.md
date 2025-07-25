@@ -27,6 +27,7 @@ A `key.bin` file is necessary to play scrambled OKD files. I do not provide this
   * **Up/Down Arrow Keys:** Adjust tempo
   * **Left/Right Arrow Keys:** Seek backward/forward by 10 seconds
   * **Page Up/Page Down Keys:** Adjust pitch (in semitones)
+  * **P Key:** Pause/Resume playback
 
 ### Platform Support
 

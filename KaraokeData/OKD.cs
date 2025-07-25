@@ -199,6 +199,8 @@ public class OKD
     public OKDPTrackInfo PTrackInfo { get; private set; }
     public OKDPTrack[] PTracks { get; private set; }
     public OKDMIDIDevice[] MIDIDev { get; private set; }
+    public uint FirstNoteONTime { get; private set; } = 0;
+    public uint TotalPlayTime { get; private set; } = 0;
 
     private readonly byte MIDI_DEV_MAX_COUNT = 4;
     private int[] OKD_SCRAMBLE_PATTERN = {};
@@ -881,12 +883,32 @@ public class OKD
 
 
 
-                track.CalculateFirstNoteONTime();
+                //track.CalculateFirstNoteONTime();
                 
             }
         }
-        
+
         //--end of sysex events compress routine
+
+        //calculate first note on time
+        foreach (var track in this.PTracks)
+        {
+            track.CalculateFirstNoteONTime();
+            if (this.FirstNoteONTime == 0 || this.FirstNoteONTime > track.FirstNoteOnTime)
+            {
+                this.FirstNoteONTime = track.FirstNoteOnTime;
+            }
+        }
+
+        //calculate total play time
+        foreach (var track in this.PTracks)
+        {
+            uint lastEventTime = track.PTrackAbsoluteEvents.LastOrDefault()?.AbsoluteTime ?? 0;
+            if (this.TotalPlayTime < lastEventTime)
+            {
+                this.TotalPlayTime = lastEventTime;
+            }
+        }
 
         OKDPlayback[] playbacks = new OKDPlayback[this.MIDIDev.Length];
         for (byte i = 0; i < this.PTracks.Length; i++)
