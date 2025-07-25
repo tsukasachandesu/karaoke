@@ -1,34 +1,53 @@
-name: .NET Publish for Windows
+name: Automatic Release on Main Push
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches:
+      - main
+
+permissions:
+  contents: write
 
 jobs:
-  build-and-publish:
+  #create new tag
+  tagging:
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+
+  release:
+    needs: tagging
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup .NET 8.0
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '8.0.x'
+      - uses: actions/checkout@v4
 
-    - name: Restore dependencies
-      run: dotnet restore OKDPlayer.csproj
-      
-    - name: Build
-      run: dotnet build OKDPlayer.csproj --configuration Release --no-restore
-      
-    - name: Publish
-      run: dotnet publish OKDPlayer.csproj --configuration Release --runtime win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishTrimmed=true -o ./publish
+      - name: Setup .NET 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: win64-release
-        path: ./publish
+      - name: Publish project
+        run: dotnet publish OKDPlayer.csproj --configuration Release --runtime win-x64 --self-contained true /p:PublishSingleFile=true /p:PublishTrimmed=true -o ./publish
+
+      - name: Zip the artifact
+        run: zip -r windows-release.zip ./publish
+
+      #Release it
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tagging.outputs.new_tag }}
+          files: windows-release.zip
