@@ -286,9 +286,10 @@ public class OKD
                 }
             }
         }
-        else
+        else //not scrambled
         {
             //Console.WriteLine("This OKD file is maybe not scrambled.");
+            return -1;
         }
 
         throw new Exception("Failed to detect OKD file scramble_pattern_index.");
@@ -300,21 +301,29 @@ public class OKD
         long startPos = okdreader.BaseStream.Position;
         while (length == null || (length != null && (okdreader.BaseStream.Position - startPos) < length))
         {
-            byte[] scrambledBuff = okdreader.ReadBytes(2);
-            if ((length == null) && (scrambledBuff.Length == 0))
-                break;
-            if (scrambledBuff.Length != 2)
-                throw new Exception("Invalid scrambled_buffer length.");
-            ushort scrambled = BitConverter.ToUInt16(scrambledBuff.Reverse(), 0);
-            int scrambledPattern;
-            if (pIndex == null)
-                scrambledPattern = 0x17d7;
-            else scrambledPattern = OKD_SCRAMBLE_PATTERN[(int)(pIndex % 0x100)];
-            ushort dec = (ushort)(scrambled ^ scrambledPattern);
-            byte[] decBuff = BitConverter.GetBytes(dec).Reverse();
-            output.Write(decBuff, 0, decBuff.Length);
-            if (pIndex != null)
-                pIndex += 1;
+            if (pIndex > -1)
+            {
+                byte[] scrambledBuff = okdreader.ReadBytes(2);
+                if ((length == null) && (scrambledBuff.Length == 0))
+                    break;
+                if (scrambledBuff.Length != 2)
+                    throw new Exception("Invalid scrambled_buffer length.");
+                ushort scrambled = BitConverter.ToUInt16(scrambledBuff.Reverse(), 0);
+                int scrambledPattern;
+                if (pIndex == null)
+                    scrambledPattern = 0x17d7;
+                else scrambledPattern = OKD_SCRAMBLE_PATTERN[(int)(pIndex % 0x100)];
+                ushort dec = (ushort)(scrambled ^ scrambledPattern);
+                byte[] decBuff = BitConverter.GetBytes(dec).Reverse();
+                output.Write(decBuff, 0, decBuff.Length);
+                if (pIndex != null)
+                    pIndex += 1;
+            }
+            else
+            {
+                output.Write(okdreader.ReadBytes((int)length), 0, (int)length);
+            }
+           
         }
         return pIndex;
     }
