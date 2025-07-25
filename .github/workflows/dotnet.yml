@@ -14,8 +14,8 @@ jobs:
     strategy:
       matrix:
         target:
-          - { rid: 'win-x86', output: 'OKDPlayer-x86.exe' }
-          - { rid: 'win-x64', output: 'OKDPlayer-x64.exe' }
+          - { rid: 'win-x86', output: 'OKDPlayer-x86' }
+          - { rid: 'win-x64', output: 'OKDPlayer-x64' }
           #- { rid: 'linux-x86', output: 'OKDPlayer-x86' }
           - { rid: 'linux-x64', output: 'OKDPlayer-x64' }
           - { rid: 'linux-arm', output: 'OKDPlayer-arm' }
@@ -39,6 +39,7 @@ jobs:
           /p:PublishSingleFile=true 
           /p:PublishTrimmed=true 
           /p:AssemblyName=${{ matrix.target.output }} 
+          /p:DebugType=None 
           -o ./publish
 
       - name: Upload Artifact
