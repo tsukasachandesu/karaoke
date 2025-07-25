@@ -747,7 +747,8 @@ public class OKD
         {
             throw new ArgumentException($"Invalid port number. Maximum is {MIDI_DEV_MAX_COUNT - 1}.");
         }
-        MIDIDev[port].ResetTG(id, mode);
+        if(port < MIDIDev.Length)
+            MIDIDev[port].ResetTG(id, mode);
     }
     public OKDPlayback[] GetPTrackPlaybacks(bool compressSysEx = true)
     {
@@ -887,14 +888,14 @@ public class OKD
         
         //--end of sysex events compress routine
 
-        OKDPlayback[] playbacks = new OKDPlayback[this.PTracks.Length];
+        OKDPlayback[] playbacks = new OKDPlayback[this.MIDIDev.Length];
         for (byte i = 0; i < this.PTracks.Length; i++)
         {
-            OKDPlayback playback = new OKDPlayback(this.PTracks[i], this.MIDIDev[i]);
-
-            //playbacks[i] = midiFile.GetPlayback(this.MIDIDev[i].Device);
-            //midiFile.Write($"debug{this.PTracks[i].TrackID}.mid", true, MidiFileFormat.SingleTrack);
-            playbacks[i] = playback;
+            if(i < MIDIDev.Length)
+            {
+                OKDPlayback playback = new OKDPlayback(this.PTracks[i], this.MIDIDev[i]);
+                playbacks[i] = playback;
+            }        
         }
         return playbacks;
     }
@@ -921,18 +922,21 @@ public class OKD
         if(this.PTrackInfo is OKDExtendedPTrackInfo) //TG1
         {
             MIDIDev[0].Transpose(0x51, key);
-            MIDIDev[2].Transpose(0x51, key);
+            if(MIDIDev.Length > 2)
+                MIDIDev[2].Transpose(0x51, key);
         }
         else
         {
             MIDIDev[0].Transpose(0x31, key);
-            MIDIDev[1].Transpose(0x31, key);
+            if (MIDIDev.Length > 1)
+                MIDIDev[1].Transpose(0x31, key);
         }
     }
 
     public void SetTGVolume(byte port, ushort volume)
     {
-        MIDIDev[port].SetTGVolume(volume);
+        if(MIDIDev.Length > port)
+            MIDIDev[port].SetTGVolume(volume);
     }
     public void SetTGVolumeAll(ushort vol)
     {

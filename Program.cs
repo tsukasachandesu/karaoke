@@ -25,7 +25,7 @@ namespace OKDPlayer
             //split input by space 
             string[] inputParts = null;
 
-            if (args.Length > 2)
+            if (args.Length > 1)
             {
                 inputParts = args.Skip(1).ToArray();
             }
@@ -55,8 +55,8 @@ namespace OKDPlayer
             
             if (inputParts.Length < okd.PTracks.Length)
             {
-                Console.WriteLine($"You must select {okd.PTracks.Length} MIDI devices.");
-                return;
+                Console.WriteLine($"WARNING: There is not enough MIDI device to play the file. Playback will be wrong!");
+                //return;
             }
             //parse input and get MIDI devices by index
             if (!inputParts.All(part => int.TryParse(part, out _)))
