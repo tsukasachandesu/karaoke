@@ -66,7 +66,7 @@ namespace OKDPlayer
             }
             
 
-
+            inputParts = inputParts[..okd.PTracks.Length];
             List<IMIDIDevice> midiDevsList = new List<IMIDIDevice>();
             foreach (var part in inputParts)
             {
