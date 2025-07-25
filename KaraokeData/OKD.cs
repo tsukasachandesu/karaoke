@@ -265,6 +265,9 @@ public class OKD
 
         if (!magic_bytes_buffer.SequenceEqual(expected_magic_bytes))
         {
+            if (OKD_SCRAMBLE_PATTERN.Length < 1)
+                throw new FileLoadException("OKD scramble key is not loaded.");
+
             //Console.WriteLine("OKD file is scrambled");
             int expected_key = BitConverter.ToInt32(magic_bytes_buffer.Reverse().ToArray(), 0) ^
                 BitConverter.ToInt32(expected_magic_bytes.Reverse().ToArray(), 0);
@@ -293,6 +296,8 @@ public class OKD
             //Console.WriteLine("This OKD file is maybe not scrambled.");
             return -1;
         }
+
+       
 
         throw new Exception("Failed to detect OKD file scramble_pattern_index.");
 
@@ -630,8 +635,8 @@ public class OKD
             }
         }
 
-        if(OKD_SCRAMBLE_PATTERN.Length < 1)
-            throw new FileLoadException("OKD scramble key is not loaded.");
+        //if(OKD_SCRAMBLE_PATTERN.Length < 1)
+        //    throw new FileLoadException("OKD scramble key is not loaded.");
 
         byte[] okdData = null;
         BinaryReader okdFileReader = new BinaryReader(data);
