@@ -93,61 +93,58 @@ namespace OKDPlayer
                 long timeDelta = currentVirtualTime - lastVirtualTime;
 
                 //back seek
-                if (timeDelta < 0)
+                if (timeDelta < 0 || timeDelta >= NORMAL_PLAYBACK_THRESHOLD_MS)
                 {
                     //reset current index to 0
-                    _currentIndex = 0;
-                }
-
-                //determine if this is normal playback or forward seek
-                bool isNormalPlayback = timeDelta >= 0 && timeDelta < NORMAL_PLAYBACK_THRESHOLD_MS;
-
-                
-                while (_currentIndex < this.ptrack.PTrackAbsoluteEvents.Count && this.ptrack.PTrackAbsoluteEvents[_currentIndex].AbsoluteTime <= currentVirtualTime)
-                {
-                    var currentEvent = this.ptrack.PTrackAbsoluteEvents[_currentIndex];
-
-                    //play only if this is normal playback
-                    if (isNormalPlayback)
+                    if (timeDelta < 0)
                     {
-                        //Play only when the event is between the last checked time and the current time
-                        if (currentEvent.AbsoluteTime > lastVirtualTime)
-                        {
-                            //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- eveent: {currentEvent.Data}");
-                            byte status = this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status;
-                            if (status == 0xF0)
-                            {
-                                //check master volume SysEx
-                                if (this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData.Length > 1 && this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData[1] == 0x7F)
-                                {
-                                    //ignore master volume SysEx
-                                    Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- Ignore MasterVol SysEx: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
-                                }
-                                else
-                                    MidiDevice.Device.SendSysEx(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData);
-                                //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- SysEx event: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
-                            }
-                            else if (status == 0xFA) { } //TODO for adpcm
-                            else if (status == 0xFD) { } //skip FD
-                            else
-                            {
-                                MidiDevice.Device.SendShortMsg(
-                                    this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status,
-                                    this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data);
-                            }
-
-                        }
+                        _currentIndex = 0;
                     }
 
-                    _currentIndex++;
+                    //In seeking mode only seek to the _currentIndex position without playing
+                    //this will skip all events less than the current time
+                    while (_currentIndex < this.ptrack.PTrackAbsoluteEvents.Count && this.ptrack.PTrackAbsoluteEvents[_currentIndex].AbsoluteTime < currentVirtualTime)
+                    {
+                        _currentIndex++;
+                    }
+                }
+                //normal playback
+                else
+                {
+                    while (_currentIndex < this.ptrack.PTrackAbsoluteEvents.Count && this.ptrack.PTrackAbsoluteEvents[_currentIndex].AbsoluteTime <= currentVirtualTime)
+                    {
+                        var currentEvent = this.ptrack.PTrackAbsoluteEvents[_currentIndex];
+                        //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- eveent: {currentEvent.Data}");
+                        byte status = this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status;
+                        if (status == 0xF0)
+                        {
+                            //check master volume SysEx
+                            if (this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData.Length > 1 && 
+                                this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData[1] == 0x7F)
+                            {
+                                //ignore master volume SysEx
+                                Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- Ignore MasterVol SysEx: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
+                            }
+                            else
+                                MidiDevice.Device.SendSysEx(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData);
+                            //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- SysEx event: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
+                        }
+                        else if (status == 0xFA) { } //TODO for adpcm
+                        else if (status == 0xFD) { } //skip FD
+                        else
+                        {
+                            MidiDevice.Device.SendShortMsg(
+                                this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status,
+                                this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data);
+                        }
+                        _currentIndex++;
+                    }
                 }
 
-
-
-                //update for next loop
                 lastVirtualTime = currentVirtualTime;
-                if(_totalPlayTime > 0 && currentVirtualTime >= _totalPlayTime)
+                if (_totalPlayTime > 0 && currentVirtualTime >= _totalPlayTime)
                     break; //break loop if playback is finished
+
 
                 Thread.Sleep(1);
             }
