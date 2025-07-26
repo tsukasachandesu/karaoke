@@ -98,7 +98,11 @@ public class WinMIDIDevice : IDisposable, IMIDIDevice
     public void SendShortMsg(byte status, byte[] data)
     {
         if (!_isOpen) return;
-        uint message = (uint)(status | (data[0] << 8) | (data[1] << 16));
+        uint message = 0;
+        if(data.Length > 1)
+            message =(uint)(status | (data[0] << 8) | (data[1] << 16));
+        else if (data.Length == 1)
+            message = (uint)(status | (data[0] << 8));
         WinMM.midiOutShortMsg(_handle, message);
     }
 

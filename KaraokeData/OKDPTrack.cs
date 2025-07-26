@@ -159,13 +159,12 @@ namespace OKDPlayer
                     {
                         throw new InvalidOperationException($"Unknown status byte for FE: {b:X2}");
                     }
-                    dataBytesLength = 1;
                     break;
                 default:
                     break;
             }
             byte[] data = reader.ReadBytes(dataBytesLength);
-            byte[] dataBytesValidate = ((statusByte == 0xFE) ? dataBytes[1..] : dataBytes).ToArray();
+            byte[] dataBytesValidate = (statusByte == 0xFE) ? data[1..] : data;
             if (!OKD.IsDataBytes(dataBytesValidate))
                 throw new InvalidOperationException("Invalid data bytes detected in MIDI event.");
             int Duration = 0;
