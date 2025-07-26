@@ -31,7 +31,7 @@ public class OKDMIDIDevice
 
     }
 
-    public void SetTGVolume(uint volume)
+    public void SetMasterVolume(uint volume)
     {
         //max 16383 (14bit)
         if (volume > 16383)
@@ -55,6 +55,86 @@ public class OKDMIDIDevice
         };
 
         Device.SendSysEx(sysexMessage);
+    }
+    public void SetMMTTotalVolume(byte volume)
+    {
+        byte[] message =
+        {
+            0xf0,
+            0x43,
+            0x10,
+            0x51,
+            0x00,
+            0x01,
+            0x00,
+            volume,
+            0x00,
+            0xf7
+        };
+        Device.SendSysEx(message);
+    }
+    public void SetSGVolume(byte id, byte volume)
+    {
+        byte[] message =
+        {
+            0xf0,
+            0x43,
+            0x10,
+            id,
+            0x00,
+            0x00,
+            0x04,
+            volume,
+            0x00,
+            0xf7
+        };
+        Device.SendSysEx(message);
+    }
+    public void SendMMSSysEx(byte bAdr, byte bData)
+    {
+        byte[] aubMmsData =
+        {
+            0xf0,
+            0x43,
+            0x75,
+            0x72,
+            0x75,
+            bAdr, //Address
+            bData, //Data
+            0x00,
+            0xf7
+        };
+
+        Device.SendSysEx(aubMmsData);
+    }
+    public void SendMEGSysExYKS(byte bAdr1, byte bAdr2, byte bDataM, byte bDataL)
+    {
+        byte[] aubMegData = new byte[12];
+
+        aubMegData[0] = 0xf0;
+        aubMegData[1] = 0x43;
+        aubMegData[2] = 0x75;
+        aubMegData[3] = 0x72;
+        aubMegData[4] = 0x20;
+        aubMegData[5] = 0x30;
+        aubMegData[9] = 0x00;
+        aubMegData[10] = 0xf7;
+        aubMegData[11] = 0xf7;
+
+        if(bDataL < 0)
+            Array.Resize(ref aubMegData, 11);
+        else
+        {
+            //Array.Resize(ref aubMegData, 12);
+            aubMegData[9] = bDataL;
+            aubMegData[10] = 0x00;
+        }
+
+        aubMegData[6] = bAdr1;
+        aubMegData[7] = bAdr2;
+        aubMegData[8] = bDataM;
+
+        Device.SendSysEx(aubMegData);
     }
 
     public void StopAllSound()

@@ -806,7 +806,7 @@ public class OKD
                             var result = compressor.CompressMidiData(ev.FullSysExData, out byte[] compressedData);
                             if (result == CompressionResult.InvalidMessage)
                             {
-                                Console.WriteLine($"OKDSysExCompress: Invalid SysEx message at time {ev.AbsoluteTime}");
+                                Console.WriteLine($"OKDSysExCompress: Invalid SysEx message at time {ev.AbsoluteTime} data:{BitConverter.ToString(ev.FullSysExData).Replace("-"," ")}");
                                 compressedSysExEvents.Add(new PTrackAbsoluteTimeEvent(
                                     ev.Port,
                                     ev.Track,
@@ -963,7 +963,7 @@ public class OKD
     public void SetTGVolume(byte port, ushort volume)
     {
         if(MIDIDev.Length > port)
-            MIDIDev[port].SetTGVolume(volume);
+            MIDIDev[port].SetMasterVolume(volume);
     }
     public void SetTGVolumeAll(ushort vol)
     {
@@ -973,18 +973,50 @@ public class OKD
         }
     }
 
+    public bool SetSongVolume(byte vol)
+    {
+        bool executed = false;
+
+        if (vol < 0x80)
+        {
+            if (PTrackInfo is OKDExtendedPTrackInfo) //TGMode0
+            {
+                this.MIDIDev[0].SendMMSSysEx(0x03, vol);
+                if (MIDIDev.Length > 2)
+                    this.MIDIDev[2].SendMMSSysEx(0x03, vol);
+                //this.MIDIDev[0].SetMMTTotalVolume(0x06, 0x04, vol, 0x7f);
+
+                executed = true;
+            }
+            else
+            {
+                this.MIDIDev[0].SendMEGSysExYKS(0x06, 0x04, 0x7f, 0x7f);
+                if (MIDIDev.Length > 2)
+                {
+                    this.MIDIDev[2].SendMEGSysExYKS(0x06, 0x04, vol, vol);
+                }
+                executed = true;
+                
+            }
+        }
+        return executed;
+    }
+
     public void AdjustTGVolume()
     {
         //なぜかTGA,Bのボリュームが合わないので調整（Bの音が結構大きい）
-        if (this.PTrackInfo is OKDExtendedPTrackInfo)
+        if (PTrackInfo is OKDExtendedPTrackInfo) //TGMode0
         {
-            SetTGVolume(0, 16384);
-            SetTGVolume(2, 11500);
+            this.MIDIDev[0].SendMMSSysEx(0x03, 127);
+            if (MIDIDev.Length > 2)
+                this.MIDIDev[2].SendMMSSysEx(0x03, 65);
         }
         else
         {
-            SetTGVolume(0, 16384); 
-            SetTGVolume(1, 11000);
+            this.MIDIDev[0].SendMEGSysExYKS(0x06, 0x04, 0x7f, 0x7f);
+            //this.MIDIDev[0].SetSGVolume(0x31, 127);
+            //if (MIDIDev.Length > 1)
+            //    this.MIDIDev[1].SetSGVolume(0x31, 80);
         }
     }
 

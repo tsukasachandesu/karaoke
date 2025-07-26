@@ -66,7 +66,7 @@ namespace OKDPlayer
             }
             
 
-            inputParts = inputParts[..okd.PTracks.Length];
+            inputParts = inputParts[..(okd.PTracks.Length > inputParts.Length ? inputParts.Length : okd.PTracks.Length)];
             List<IMIDIDevice> midiDevsList = new List<IMIDIDevice>();
             foreach (var part in inputParts)
             {
@@ -98,7 +98,7 @@ namespace OKDPlayer
 
             Console.WriteLine("Resetting TG Devices...");
             okd.ResetTGDevices(true);
-            okd.AdjustTGVolume();
+            
 
             //Masterclock setup
             MasterClock masterClock = new MasterClock();
@@ -187,6 +187,11 @@ namespace OKDPlayer
                         okd.Transpose(transposeKey);
                         Console.WriteLine($"Transposing down: {transposeKey} semitones");
                     }
+                    else if(key == ConsoleKey.V)
+                    {
+                        Console.WriteLine($"Adjusting TG volume.");
+                        okd.AdjustTGVolume();
+                    }
                     else if (key == ConsoleKey.P)
                     {
                        if(masterClock.IsPlaybackPaused)
@@ -220,6 +225,7 @@ namespace OKDPlayer
                 {
                     if (!firstShow)
                     {
+                        okd.AdjustTGVolume();
                         Console.WriteLine();
                         Console.WriteLine("Starting playback... Press Enter to stop playback, Up/Down arrows to change speed, PageUp/PageDown to transpose.");
                         firstShow = true;
@@ -233,7 +239,7 @@ namespace OKDPlayer
             }
 
             //Stop hanging notes
-            foreach (var playback in playbacks.Where(p => p.IsPlaying))
+            foreach (var playback in playbacks)
             {
                 playback.MidiDevice.StopAllSound();
             }

@@ -119,8 +119,7 @@ namespace OKDPlayer
                         if (status == 0xF0)
                         {
                             //check master volume SysEx
-                            if (this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData.Length > 1 && 
-                                this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData[1] == 0x7F)
+                            if (this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData.AsSpan().StartsWith(new byte[] { 0xF0, 0x43, 0x75, 0x72, 0x20 ,0x30, 6, 4 }))
                             {
                                 //ignore master volume SysEx
                                 Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- Ignore MasterVol SysEx: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
