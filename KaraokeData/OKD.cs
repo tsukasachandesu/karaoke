@@ -203,7 +203,7 @@ public class OKD
     public uint TotalPlayTime { get; private set; } = 0;
 
     private readonly byte MIDI_DEV_MAX_COUNT = 4;
-    private int[] OKD_SCRAMBLE_PATTERN = {};
+    private ushort[] OKD_SCRAMBLE_PATTERN = {};
 
     public enum OKDFileType
     {
@@ -623,14 +623,14 @@ public class OKD
         //parse key data
         if (keydata != null)
         {
-            if (keydata.Length != 1024)
+            if (keydata.Length != 512)
                 throw new ArgumentException("invalid key data");
 
-            OKD_SCRAMBLE_PATTERN = new int[256];
-            for (int i = 0; i < 1024; i += 4)
+            OKD_SCRAMBLE_PATTERN = new ushort[256];
+            for (int i = 0; i < 512; i += 2)
             {
-                int key = BitConverter.ToInt32(keydata, i);
-                OKD_SCRAMBLE_PATTERN[i / 4] = key;
+                ushort key = BitConverter.ToUInt16(keydata, i);
+                OKD_SCRAMBLE_PATTERN[i / 2] = key;
 
             }
         }
