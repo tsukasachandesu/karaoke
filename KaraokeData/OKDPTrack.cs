@@ -274,12 +274,16 @@ namespace OKDPlayer
                     }
 
                     //NoteON
-                    this.PTrackAbsoluteEvents.AddRange(RelocatePTrackEvent(
-                        ptrackInfoEntry,
-                        (byte)(0x90 | channel),
-                        new byte[] { noteNum, onVelocity },
-                        absoluteTime, channelGroupingEnabled)
-                    );
+                    if(onVelocity > 1) //temp fix
+                    {
+                        this.PTrackAbsoluteEvents.AddRange(RelocatePTrackEvent(
+                            ptrackInfoEntry,
+                            (byte)(0x90 | channel),
+                            new byte[] { noteNum, onVelocity },
+                            absoluteTime, channelGroupingEnabled)
+                        );
+                    }
+                    
 
                     //NoteOFF
                     this.PTrackAbsoluteEvents.AddRange(RelocatePTrackEvent(
@@ -302,13 +306,17 @@ namespace OKDPlayer
                     }
 
                     //NoteON
-                    this.PTrackAbsoluteEvents.AddRange(RelocatePTrackEvent(
-                        ptrackInfoEntry,
-                        ev.Status,
-                        ev.Data,
-                        absoluteTime,
-                        channelGroupingEnabled)
-                    );
+                    if(onVelocity > 1)//temp fix
+                    {
+                        this.PTrackAbsoluteEvents.AddRange(RelocatePTrackEvent(
+                            ptrackInfoEntry,
+                            ev.Status,
+                            ev.Data,
+                            absoluteTime,
+                            channelGroupingEnabled)
+                        );
+                    }
+                    
 
                     //NoteOFF
                     this.PTrackAbsoluteEvents.AddRange(RelocatePTrackEvent(
