@@ -4,6 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using static ALSA;
 
 public class LinuxMIDIDevice : IMIDIDevice, IDisposable
 {
@@ -11,6 +12,14 @@ public class LinuxMIDIDevice : IMIDIDevice, IDisposable
     private int _port;
     private int _destinationClientId = -1;
     private int _destinationPortId = -1;
+    private const int midi_event_buffer_size = 256;
+    private readonly byte[] event_buffer_output = new byte[midi_event_buffer_size];
+    private IntPtr midi_event_parser_output;
+    private static readonly int seq_evt_size = Marshal.SizeOf(typeof(snd_seq_event_t));
+    private static readonly int seq_evt_off_source_port = (int)Marshal.OffsetOf(typeof(snd_seq_event_t), "source") + (int)Marshal.OffsetOf(typeof(snd_seq_addr_t), "port");
+    private static readonly int seq_evt_off_dest_client = (int)Marshal.OffsetOf(typeof(snd_seq_event_t), "dest") + (int)Marshal.OffsetOf(typeof(snd_seq_addr_t), "client");
+    private static readonly int seq_evt_off_dest_port = (int)Marshal.OffsetOf(typeof(snd_seq_event_t), "dest") + (int)Marshal.OffsetOf(typeof(snd_seq_addr_t), "port");
+    private static readonly int seq_evt_off_queue = (int)Marshal.OffsetOf(typeof(snd_seq_event_t), "queue");
 
     public LinuxMIDIDevice()
     {
@@ -80,8 +89,7 @@ public class LinuxMIDIDevice : IMIDIDevice, IDisposable
         message[0] = status;
         Array.Copy(data, 0, message, 1, data.Length);
 
-        // 이 메시지를 RAW32 이벤트로 전송
-        SendRawData(message);
+        Send(_port, message, 0, message.Length);
     }
 
     public void SendSysEx(byte[] data)
@@ -91,7 +99,7 @@ public class LinuxMIDIDevice : IMIDIDevice, IDisposable
         var midiEvent = new ALSA.snd_seq_event_t();
         //ALSA.snd_seq_ev_clear(ref midiEvent);
         midiEvent.source.port = (byte)_port;
-        midiEvent.flags = ALSA.SND_SEQ_EVENT_LENGTH_VARIABLE; 
+        midiEvent.flags = ALSA.SND_SEQ_EVENT_LENGTH_VARIABLE;
         midiEvent.type = ALSA.snd_seq_event_type.SND_SEQ_EVENT_SYSEX;
 
         //copy data to unmanaged memory
@@ -101,9 +109,25 @@ public class LinuxMIDIDevice : IMIDIDevice, IDisposable
         midiEvent.data.ext.len = (uint)data.Length;
         midiEvent.data.ext.ptr = ptr;
 
-        SendEvent(ref midiEvent);
+        //SendEvent(ref midiEvent);
 
         Marshal.FreeHGlobal(ptr); //free
+
+        midiEvent.dest.client = (byte)_destinationClientId;
+        midiEvent.dest.port = (byte)_destinationPortId;
+
+        int bufferSize = Marshal.SizeOf(midiEvent);
+        IntPtr ev = Marshal.AllocHGlobal(bufferSize);
+        Marshal.StructureToPtr(midiEvent, ev, false);
+
+        // Send the event and wait for it to be processed
+        if (ALSA.snd_seq_event_output_direct(_sequencer,  ev) >= 0)
+        {
+            ALSA.snd_seq_drain_output(_sequencer);
+        }
+
+        Marshal.FreeHGlobal(ev);
+
     }
 
 
@@ -153,48 +177,57 @@ public class LinuxMIDIDevice : IMIDIDevice, IDisposable
         return false;
     }
 
-
-    private void SendRawData(byte[] rawData)
+    public void Send(int port, byte[] data, int index, int count)
     {
-        if (_sequencer == IntPtr.Zero || rawData == null || rawData.Length == 0) return;
-
-        // Split data into 12-byte chunks
-        for (int offset = 0; offset < rawData.Length; offset += 12)
+        //init
+        if (midi_event_parser_output == IntPtr.Zero)
         {
-            var midiEvent = new ALSA.snd_seq_event_t();
-            //ALSA.snd_seq_ev_clear(ref midiEvent);
+            int err = ALSA.snd_midi_event_new(
+                midi_event_buffer_size,
+                out midi_event_parser_output
+            );
+            if (err < 0)
+                throw new ArgumentException("snd_midi_event_new() returned " + err.ToString());
+        }
 
-            midiEvent.type = ALSA.snd_seq_event_type.SND_SEQ_EVENT_USR0;
-            midiEvent.source.port = (byte)_port;
-            midiEvent.flags = ALSA.SND_SEQ_EVENT_LENGTH_FIXED;
+        //pin
+        var handle = GCHandle.Alloc(event_buffer_output, GCHandleType.Pinned);
+        try
+        {
+            IntPtr evPtr = handle.AddrOfPinnedObject();
 
-            // Create a 12-byte buffer for the current chunk.
-            // Any bytes past the end of rawData will remain 0.
-            byte[] chunk = new byte[12];
-            int chunkLength = Math.Min(12, rawData.Length - offset);
-            Array.Copy(rawData, offset, chunk, 0, chunkLength);
+            for (int i = index; i < index + count; i++)
+            {
+                //encode byte into midi event
+                int ret = ALSA.snd_midi_event_encode_byte(
+                    midi_event_parser_output,
+                    data[i],
+                    evPtr
+                );
+                if (ret < 0)
+                    throw new ArgumentException("snd_midi_event_encode_byte() returned " + ret.ToString());
 
-            // Use BitConverter to safely convert the byte chunks to uints.
-            // This is type-safe and avoids the previous exception.
-            midiEvent.data.raw32.d0 = BitConverter.ToUInt32(chunk, 0);
-            midiEvent.data.raw32.d1 = BitConverter.ToUInt32(chunk, 4);
-            midiEvent.data.raw32.d2 = BitConverter.ToUInt32(chunk, 8);
+                //send event if successfully encoded
+                if (ret > 0)
+                {
+                    Marshal.WriteByte(evPtr, seq_evt_off_source_port, (byte)port);
+                    Marshal.WriteByte(evPtr, seq_evt_off_dest_client, AddressSubscribers);
+                    Marshal.WriteByte(evPtr, seq_evt_off_dest_port, AddressUnknown);
+                    Marshal.WriteByte(evPtr, seq_evt_off_queue, SND_SEQ_QUEUE_DIRECT);
+                    ALSA.snd_seq_event_output_direct(_sequencer, evPtr);
 
-            SendEvent(ref midiEvent);
+                    //ALSA.snd_midi_event_reset_encode(midi_event_parser_output);
+                    ALSA.snd_midi_event_init(midi_event_parser_output);
+                }
+            }
+        }
+        finally
+        {
+            handle.Free();
         }
     }
 
-    private void SendEvent(ref ALSA.snd_seq_event_t ev)
-    {
-        ev.dest.client = (byte)_destinationClientId;
-        ev.dest.port = (byte)_destinationPortId;
 
-        // Send the event and wait for it to be processed
-        if (ALSA.snd_seq_event_output_direct(_sequencer, ref ev) >= 0)
-        {
-            ALSA.snd_seq_drain_output(_sequencer);
-        }
-    }
 
 
     public void Dispose()

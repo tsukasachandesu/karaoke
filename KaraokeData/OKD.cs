@@ -799,8 +799,9 @@ public class OKD
                 {
                     var compressor = new OKDSysExCompresser();
                     uint absTime = 0;
-                    foreach (var ev in track.PTrackAbsoluteEvents)
+                    for (int i = 0; i < track.PTrackAbsoluteEvents.Count; i++)
                     {
+                        PTrackAbsoluteTimeEvent ev = track.PTrackAbsoluteEvents[i];
                         if (ev.Status == 0xF0 && ev.AbsoluteTime < sysExEndTimeBeforeCompress)
                         {
                             var result = compressor.CompressMidiData(ev.FullSysExData, out byte[] compressedData);

@@ -225,6 +225,7 @@ namespace OKDPlayer
                 {
                     if (!firstShow)
                     {
+                        //Console.WriteLine($"Total Play Time: {totalPlayTimeMin:D2}:{totalPlayTimeSecRemainder:D2}");
                         okd.AdjustTGVolume();
                         Console.WriteLine();
                         Console.WriteLine("Starting playback... Press Enter to stop playback, Up/Down arrows to change speed, PageUp/PageDown to transpose.");

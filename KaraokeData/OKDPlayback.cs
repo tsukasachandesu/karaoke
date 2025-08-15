@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace OKDPlayer
 {
@@ -132,6 +133,7 @@ namespace OKDPlayer
                         else if (status == 0xFD) { } //skip FD
                         else
                         {
+                            //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- Send MIDI event: status {this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status:X2} {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data)}");
                             MidiDevice.Device.SendShortMsg(
                                 this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status,
                                 this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data);
