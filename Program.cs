@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using OKDPlayer.KaraokeData;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace OKDPlayer
@@ -10,6 +11,9 @@ namespace OKDPlayer
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.WriteLine("OKD Player - DAM OKD File Player");
+            //byte[] adpcmRAW = File.ReadAllBytes("adpcm.yawv");
+            //byte[] pcwWAV = OKDADPCM.ConvertToWAV(adpcmRAW, 22050);
+            //File.WriteAllBytes("adpcm.wav", pcwWAV);
             if (args.Length == 0)
             {
                 Console.WriteLine("Usage: OKDPlayer <path_to_okd_file> <midi device id>...");

@@ -1,4 +1,5 @@
 ﻿using OKDPlayer;
+using OKDPlayer.KaraokeData;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -201,6 +202,7 @@ public class OKD
     public OKDMIDIDevice[] MIDIDev { get; private set; }
     public uint FirstNoteONTime { get; private set; } = 0;
     public uint TotalPlayTime { get; private set; } = 0;
+    public byte[][] BackChoursPCM { get; private set; } = null;
 
     private readonly byte MIDI_DEV_MAX_COUNT = 4;
     private ushort[] OKD_SCRAMBLE_PATTERN = {};
@@ -659,7 +661,7 @@ public class OKD
 
         OKDHeader header = descramble(okdReader, stream, OKDFileType.OKD);
         this.Header = header;
-
+        //File.WriteAllBytes("debug.bin", stream.ToArray());
         using (BinaryReader reader = new BinaryReader(stream))
         {
             //skip header
@@ -673,7 +675,23 @@ public class OKD
                 {
                     if (reader.BaseStream.Position >= header.AdpcmOffset)
                     {
-                        reader.BaseStream.Seek(header.AdpcmOffset + 52, SeekOrigin.Begin);
+                        //seek until meet "YADD" chunk
+                        while (true)
+                        {
+                            byte[] sig = reader.ReadBytes(4);
+                            if (sig.SequenceEqual(Encoding.ASCII.GetBytes("YADD")))
+                            {
+                                //found "YADD" chunk, seek back 4 bytes
+                                reader.BaseStream.Seek(-4, SeekOrigin.Current);
+                                break;
+                            }
+                            if (reader.BaseStream.Position >= reader.BaseStream.Length)
+                            {
+                                // End of stream reached
+                                break;
+                            }
+                        }
+                        //reader.BaseStream.Seek(header.AdpcmOffset + 52, SeekOrigin.Begin);
                     }
 
                 }
@@ -721,6 +739,8 @@ public class OKD
                 this.PTrackInfo = extendedTrackInfo;
             }
 
+            
+
             //PR*
             if (chunk.ChunkId.AsSpan().StartsWith(new byte[] { 0xff, (byte)'P', (byte)'R' }))
             {
@@ -732,6 +752,40 @@ public class OKD
                 track.TrackID = chunk.ChunkId[3];
                 tracks.Add(track);
                 pTrackCount++;
+            }
+
+            //ADPCM
+            if (Encoding.ASCII.GetString(chunk.ChunkId).StartsWith("YADD"))
+            {
+                List<byte[]> pcmData = new List<byte[]>();
+
+                using (BinaryReader adpcmReader = new BinaryReader(new MemoryStream(chunk.Data)))
+                {
+                    while (adpcmReader.BaseStream.Position < adpcmReader.BaseStream.Length)
+                    {
+                        string headerSig = Encoding.ASCII.GetString(adpcmReader.ReadBytes(4));
+                        uint adpcmSize = adpcmReader.ReadUInt32BE();
+                        if (headerSig != "YAWV")
+                        {
+                            Console.WriteLine($"Invalid ADPCM chunk header: {headerSig}");
+                            pcmData.Add(Array.Empty<byte>());
+                            continue;
+                        }
+
+
+                        byte[] adpcm = adpcmReader.ReadBytes((int)adpcmSize);
+                        if (adpcmSize > 0)
+                            pcmData.Add(OKDADPCM.ConvertToPCM(adpcm));
+                        else
+                            pcmData.Add(Array.Empty<byte>());
+                    }
+
+                    this.BackChoursPCM = new byte[pcmData.Count][];
+                    for (int i = 0; i < pcmData.Count; i++)
+                    {
+                        this.BackChoursPCM[i] = pcmData[i];
+                    }
+                }
             }
         }
 
@@ -921,9 +975,13 @@ public class OKD
         {
             if(i < MIDIDev.Length)
             {
-                OKDPlayback playback = new OKDPlayback(this.PTracks[i], this.MIDIDev[i]);
+                //find if PTrack has F8(ADPCM Note ON) event
+                bool hasF8 = this.PTracks[i].PTrackAbsoluteEvents.Any(e => e.Status == 0xF8);
+
+                OKDPlayback playback = new OKDPlayback(this.PTracks[i], this.MIDIDev[i], hasF8 ? this.BackChoursPCM : null , 50); //첫번째 트랙에만 adpcm 넣기
                 playbacks[i] = playback;
-            }        
+            }
+
         }
         return playbacks;
     }
