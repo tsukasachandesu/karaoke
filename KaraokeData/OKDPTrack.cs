@@ -365,8 +365,14 @@ namespace OKDPlayer
                 }
                 channelGroupingEnabled = ev.Status == 0xFD;
             }
-            //sort by absolute time
-            this.PTrackAbsoluteEvents.Sort((x, y) => x.AbsoluteTime.CompareTo(y.AbsoluteTime));
+
+            //Sort by absolute time, then by CC event
+            //sort CC event first if same time
+            //this will be prevent volume issue
+            this.PTrackAbsoluteEvents = this.PTrackAbsoluteEvents
+                .OrderBy(ev => ev.AbsoluteTime)
+                .ThenBy(ev => (ev.GetStatusType() == 0xB0) ? 0 : 1)
+                .ToList();
 
             //Calculate the first Note ON time
             CalculateFirstNoteONTime();

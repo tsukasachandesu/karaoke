@@ -8,7 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ManagedBass" Version="4.0.1" />
+    <None Remove="dkdb.db" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommandLineParser" Version="2.9.1" />
+    <PackageReference Include="ManagedBass" Version="4.0.2" />
   </ItemGroup>
 
 </Project>

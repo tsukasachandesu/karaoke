@@ -17,7 +17,14 @@ This software can read and play DAM KaraOKe Data (OKD) files.
 ### Usage
 
 ```bash
-OKDPlayer.exe <OKD File path> <midi device number ...>
+OKDPlayer.exe -i <path_to_okd_file> <options>
+Options:
+  -i, --input-okd-file     Path to OKD file to play
+  -m, --midi-devices       Set midi playback devices as number, Ex: 1 2 3 4
+  -g, --guide-melody-mute  Mute guide melody (PTrack 1, Channel 8) on start
+  -t, --transpose          Transpose key in semitones (positive or negative)
+  -s, --sync-offset-adpcm  Sync offset in milliseconds to apply when ADPCM chorus is present.
+  -h, --help			   Display help information
 ```
 
 A `key.bin` file is necessary to play scrambled OKD files. I do not provide this file or any information on how to obtain it.
@@ -28,6 +35,8 @@ A `key.bin` file is necessary to play scrambled OKD files. I do not provide this
   * **Left/Right Arrow Keys:** Seek backward/forward by 10 seconds
   * **Page Up/Page Down Keys:** Adjust pitch (in semitones)
   * **P Key:** Pause/Resume playback
+  * **G Key:** Toggle Guide melody on/off (Not working some TGMode0 OKD)
+  * **Number Keys (1-9):** Mute/Unmute Specific PTrack playback
 
 ### Platform Support
 
@@ -52,7 +61,7 @@ A `key.bin` file is necessary to play scrambled OKD files. I do not provide this
 
 ## TODO
 
-  * Add support for ADPCM back chorus.
+  * Add fully support for ADPCM back chorus.
   * Full support for the Linux platform.
 
 -----

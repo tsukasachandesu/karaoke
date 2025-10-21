@@ -811,7 +811,7 @@ public class OKD
         if(port < MIDIDev.Length)
             MIDIDev[port].ResetTG(id, mode);
     }
-    public OKDPlayback[] GetPTrackPlaybacks(bool compressSysEx = true)
+    public OKDPlayback[] GetPTrackPlaybacks(bool compressSysEx = true, int adpcmOffsetMs = 0)
     {
         if (this.PTracks == null || this.PTracks.Length == 0)
             return null;
@@ -977,8 +977,8 @@ public class OKD
             {
                 //find if PTrack has F8(ADPCM Note ON) event
                 bool hasF8 = this.PTracks[i].PTrackAbsoluteEvents.Any(e => e.Status == 0xF8);
-
-                OKDPlayback playback = new OKDPlayback(this.PTracks[i], this.MIDIDev[i], hasF8 ? this.BackChoursPCM : null , 50); //첫번째 트랙에만 adpcm 넣기
+                //Console.WriteLine($"Track {i} has F8 event: {hasF8}");
+                OKDPlayback playback = new OKDPlayback(this.PTracks[i], this.MIDIDev[i], hasF8 ? this.BackChoursPCM : null , adpcmOffsetMs); //첫번째 트랙에만 adpcm 넣기
                 playbacks[i] = playback;
             }
 

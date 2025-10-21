@@ -1,4 +1,8 @@
-﻿using OKDPlayer.KaraokeData;
+﻿using CommandLine;
+using CommandLine.Text;
+using OKDPlayer.KaraokeData;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -7,33 +11,76 @@ namespace OKDPlayer
     internal class Program
     {
         private static int transposeKey = 0;
+        private static bool guideMelMuted = false;
+        private static int syncoffsetAdpcm = 0;
+        private static string inputOKDFile = string.Empty;
+        private static int[] midiDevIndexes = new int[] { };
+        public class OKDPlayerCommandlineOptions
+        {
+            [Option('m', "midi-devices", Required = false, HelpText = "Set midi playback devices as number, Ex: 1 2 3 4")]
+            public IEnumerable<int> midiDevIndexs { get; set; }
+
+            [Option('i', "input-okd-file", Required = true, HelpText = "Path to OKD file to play.")]
+            public string inputOKDFile { get; set; }
+
+            [Option('g', "guide-melody-mute", Required = false, HelpText = "Mute guide melody (PTrack 1, Channel 8) on start.")]
+            public bool muteGuideMelody { get; set; }
+
+            [Option('t', "transpose", Required = false, HelpText = "Transpose key in semitones (positive or negative).")]
+            public int transposeKey { get; set; }
+
+            [Option('s', "sync-offset-adpcm", Required = false, HelpText = "Sync offset in milliseconds to apply when ADPCM chorus is present.")]
+            public int syncOffsetAdpcm { get; set; } = 0;
+        }
         static void Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.WriteLine("OKD Player - DAM OKD File Player");
-            //byte[] adpcmRAW = File.ReadAllBytes("adpcm.yawv");
-            //byte[] pcwWAV = OKDADPCM.ConvertToWAV(adpcmRAW, 22050);
-            //File.WriteAllBytes("adpcm.wav", pcwWAV);
-            if (args.Length == 0)
+            var parser = new Parser(with => with.HelpWriter = null);
+            ParserResult<OKDPlayerCommandlineOptions> parseRes = parser.ParseArguments<OKDPlayerCommandlineOptions>(args);
+            
+            parseRes.WithParsed((o) =>
+             {
+                 transposeKey = o.transposeKey;
+                 guideMelMuted = o.muteGuideMelody;
+                 syncoffsetAdpcm = o.syncOffsetAdpcm;
+                 inputOKDFile = o.inputOKDFile;
+                 midiDevIndexes = new int[o.midiDevIndexs.Count()];
+
+                 for (int i = 0; i < o.midiDevIndexs.Count(); i++)
+                 {
+                     midiDevIndexes[i] = o.midiDevIndexs.ElementAt(i);
+                 }
+             })
+            
+            .WithNotParsed((e) =>
             {
-                Console.WriteLine("Usage: OKDPlayer <path_to_okd_file> <midi device id>...");
-                return;
-            }
-            Console.WriteLine($"Loading OKD file: {args[0]}");
+                var txt = HelpText.AutoBuild(parseRes, h => {
+                    //configure HelpText
+                    h.AdditionalNewLineAfterOption = false;
+                    h.Heading = "";
+                    h.AddEnumValuesToHelpText = true;
+                    //h.Heading = "OKDPlayer - DAM OKD Player"; 
+                    h.Copyright = "Copyright (c) 2025 dhlrunner(runner38)"; 
+                    return h;
+                }, x => x);
+                Console.WriteLine(txt);
+                Environment.Exit(1);
+            });
+
+
+    
+            Console.WriteLine($"Loading OKD file: {inputOKDFile}");
             OKD okd = new OKD();
 
-            okd.LoadFromFile(args[0], File.Exists("key.bin") ? "key.bin" : null);
+            okd.LoadFromFile(inputOKDFile, File.Exists("key.bin") ? "key.bin" : null);
 
             Console.WriteLine($"OKD file loaded successfully. PTrack Count :{okd.PTracks.Length}");
 
             //split input by space 
-            string[] inputParts = null;
+            //string[] inputParts = null;
 
-            if (args.Length > 1)
-            {
-                inputParts = args.Skip(1).ToArray();
-            }
-            else
+            if(midiDevIndexes.Length < 1)
             {
                 // Get available MIDI output devices
                 string[] midiDevs = MIDIDevice.GetOutputDeviceNames().ToArray();
@@ -52,50 +99,52 @@ namespace OKDPlayer
 
                 Console.WriteLine($"Select MIDI Output Device by number. This OKD file needs {okd.PTracks.Length} MIDI Ports.");
                 string input = Console.ReadLine();
-                inputParts = input.Split(' '); 
+                string[] sp = input.Split(' ');
+                if (!sp.All(part => int.TryParse(part, out _)))
+                {
+                    Console.WriteLine("Invalid input. Please enter valid MIDI device indices separated by spaces.");
+                    return;
+                }
+                midiDevIndexes = new int[sp.Length];
+                for (int i = 0; i < sp.Length; i++)
+                {
+                    midiDevIndexes[i] = int.Parse(sp[i]);
+                }
             }
 
            
             
-            if (inputParts.Length < okd.PTracks.Length)
+            if (midiDevIndexes.Length < okd.PTracks.Length)
             {
                 Console.WriteLine($"WARNING: There is not enough MIDI device to play the file. Playback will be wrong!");
                 //return;
             }
-            //parse input and get MIDI devices by index
-            if (!inputParts.All(part => int.TryParse(part, out _)))
-            {
-                Console.WriteLine("Invalid input. Please enter valid MIDI device indices separated by spaces.");
-                return;
-            }
+           
             
 
-            inputParts = inputParts[..(okd.PTracks.Length > inputParts.Length ? inputParts.Length : okd.PTracks.Length)];
+           // inputParts = inputParts[..(okd.PTracks.Length > inputParts.Length ? inputParts.Length : okd.PTracks.Length)];
             List<IMIDIDevice> midiDevsList = new List<IMIDIDevice>();
-            foreach (var part in inputParts)
+            foreach (var part in midiDevIndexes)
             {
-                if (int.TryParse(part, out int index) && index >= 0)
+                if(okd.PTracks.Length <= midiDevsList.Count)
                 {
-                    IMIDIDevice dev = null;
-                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                        dev = new WinMIDIDevice();
-                    else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                        dev = new LinuxMIDIDevice();
-                    bool res = dev.Open(index);
-                    if (!res)
-                    {
-                        Console.WriteLine($"Failed to open MIDI device at index {index}. Please check the device and try again.");
-                        return;
-                    }
-                    midiDevsList.Add(dev);
+                    break; //No more needed
                 }
-                else
+                IMIDIDevice dev = null;
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    dev = new WinMIDIDevice();
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    dev = new LinuxMIDIDevice();
+                bool res = dev.Open(part);
+                if (!res)
                 {
-                    Console.WriteLine($"Invalid MIDI device index: {index}. Please select a valid index.");
+                    Console.WriteLine($"Failed to open MIDI device at index {part}. Please check the device and try again.");
                     return;
                 }
+                midiDevsList.Add(dev);
             }
 
+            
 
             okd.SetMIDIDevice(midiDevsList.ToArray());
 
@@ -107,13 +156,31 @@ namespace OKDPlayer
             //Masterclock setup
             MasterClock masterClock = new MasterClock();
 
-            OKDPlayback[] playbacks = okd.GetPTrackPlaybacks();
-           
+            OKDPlayback[] playbacks = okd.GetPTrackPlaybacks(adpcmOffsetMs:syncoffsetAdpcm);
 
-            
+            if(guideMelMuted)
+            {
+                //Mute guide melody (PTrack 1, Channel 8)
+                playbacks[1].MuteChannel(8);
+            }
+
+            if(transposeKey != 0)
+                okd.Transpose(transposeKey);
+
+
+            //playbacks[1].MuteChannel(8);
+            //Mute back chorus midi if has adpcm chorus
+            //if(okd.BackChoursPCM != null) 
+            //{
+            //    Console.WriteLine("Muting back chorus MIDI channels due to ADPCM chorus presence.");
+            //    playbacks[1].MuteChannel(6);
+            //    playbacks[1].MuteChannel(7);
+            //}
+
             foreach (var playback in playbacks)
             {
-                playback.Play(masterClock);
+                if(playback != null)
+                    playback.Play(masterClock);
                 //break;
             }
             masterClock.Start();
@@ -137,7 +204,7 @@ namespace OKDPlayer
                         //Stop all playbacks
                         Console.WriteLine($"Stopping playback...");
                         foreach (var playback in playbacks.Where(p => p.IsPlaying))
-                        {                           
+                        {
                             playback.Stop();
                             masterClock.Stop();
                             playback.MidiDevice.StopAllSound();
@@ -148,20 +215,20 @@ namespace OKDPlayer
                     else if (key == ConsoleKey.UpArrow)
                     {
                         //speed up
-                        
+
                         masterClock.SpeedRatio += 0.1f; // Increase speed by 10%
                         Console.WriteLine($"Playback speed set to {masterClock.SpeedRatio:F1}");
                     }
                     else if (key == ConsoleKey.DownArrow)
                     {
                         //slow down
-                        
+
                         if (masterClock.SpeedRatio <= 0.1f)
                             continue; // Don't allow speed to go below 0.1
                         masterClock.SpeedRatio -= 0.1f; // Decrease speed by 10%, but not below 0.1
                         Console.WriteLine($"Playback speed set to {masterClock.SpeedRatio:F1}");
                     }
-                    else if(key == ConsoleKey.LeftArrow)
+                    else if (key == ConsoleKey.LeftArrow)
                     {
                         Console.WriteLine($"Seeking backward 10 seconds.");
                         masterClock.Seek(Math.Max(okd.FirstNoteONTime - 20, masterClock.CurrentVirtualTime + -10000) - masterClock.CurrentVirtualTime);
@@ -179,7 +246,7 @@ namespace OKDPlayer
                             playback.MidiDevice.StopAllSound();
                         }
                     }
-                    else if(key == ConsoleKey.PageUp)
+                    else if (key == ConsoleKey.PageUp)
                     {
                         transposeKey++;
                         okd.Transpose(transposeKey);
@@ -191,14 +258,30 @@ namespace OKDPlayer
                         okd.Transpose(transposeKey);
                         Console.WriteLine($"Transposing down: {transposeKey} semitones");
                     }
-                    else if(key == ConsoleKey.V)
+                    else if (key == ConsoleKey.V)
                     {
                         Console.WriteLine($"Adjusting TG volume.");
                         okd.AdjustTGVolume();
                     }
+                    else if (key == ConsoleKey.G)
+                    {
+                        //Mute or unmute guide melody (PTrack 1, Channel 8)
+                        var guidePlayback = playbacks[1];
+                        if (guideMelMuted)
+                        {
+                            guidePlayback.UnmuteChannel(8);
+                            Console.WriteLine("Guide melody unmuted.");
+                        }
+                        else
+                        {
+                            guidePlayback.MuteChannel(8);
+                            Console.WriteLine("Guide melody muted.");
+                        }
+                        guideMelMuted = !guideMelMuted;
+                    }
                     else if (key == ConsoleKey.P)
                     {
-                       if(masterClock.IsPlaybackPaused)
+                        if (masterClock.IsPlaybackPaused)
                         {
                             masterClock.Resume();
                             Console.WriteLine("Playback resumed.         ");
@@ -212,7 +295,19 @@ namespace OKDPlayer
                             }
                             Console.WriteLine("Playback paused.         ");
                         }
-                        
+
+                    }
+                    else if(key == ConsoleKey.D1 || key == ConsoleKey.D2 || key == ConsoleKey.D3 || key == ConsoleKey.D4 ||
+                            key == ConsoleKey.D5 || key == ConsoleKey.D6 || key == ConsoleKey.D7 ||
+                            key == ConsoleKey.D8 || key == ConsoleKey.D9)
+                    {
+                        int trackNum = (int)key - (int)ConsoleKey.D1;
+                        if (trackNum < playbacks.Length)
+                        {
+                            var playback = playbacks[trackNum];
+                            playback.ToggleMuteAll();
+                            Console.WriteLine($"PTrack {trackNum} {(playback.IsMutedAll ? "muted" : "unmuted")}.         ");
+                        }
                     }
 
                 }

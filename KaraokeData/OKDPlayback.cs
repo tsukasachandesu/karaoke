@@ -120,8 +120,10 @@ namespace OKDPlayer
     public class OKDPlayback
     {
         public bool IsPlaying { get; set; }
+        public bool HasADPCMChorus { get; private set; }
         public OKDMIDIDevice MidiDevice { get; private set; }
         public byte[] ChannelVolumes { get; private set; } = new byte[16];
+        public bool IsMutedAll { get; private set; } = false;
 
         private OKDPTrack ptrack = null;
         private int _currentIndex;
@@ -138,6 +140,8 @@ namespace OKDPlayer
 
         private byte[][] _pcmChorusData = null;
         private PCMSampleBank pcmChorusPlayer = null;
+        private bool[] _channelMuteStatus = new bool[16];
+        
 
         //get or set speedrate
         public double SpeedRatio
@@ -157,6 +161,7 @@ namespace OKDPlayer
 
         public OKDPlayback(OKDPTrack ptrack, OKDMIDIDevice device, byte[][] pcmChorusData = null, int chorusSyncMS = 0)
         {
+            Array.Fill( this._channelMuteStatus, false); //initialize mute status
             this.ptrack = ptrack ?? throw new ArgumentNullException(nameof(ptrack), "PTrack cannot be null.");
             MidiDevice = device ?? throw new ArgumentNullException(nameof(device), "MIDI device cannot be null.");
 
@@ -189,6 +194,7 @@ namespace OKDPlayer
                 {
                     pcmChorusPlayer.AddPcm(pcmChorusData[i]);
                 }
+                HasADPCMChorus = true;
             }
             //calculate total play time
             _totalPlayTime = ptrack.PTrackAbsoluteEvents.Count > 0 ? ptrack.PTrackAbsoluteEvents.Last().AbsoluteTime : 0;
@@ -221,12 +227,36 @@ namespace OKDPlayer
             _cancellationTokenSource?.Cancel();
         }
 
-        public void Mute()
+        public void MuteChannel(byte channelNum)
         {
-            if (IsPlaying)
-            {
+            if (channelNum < 0 || channelNum > 15)
+                throw new ArgumentOutOfRangeException(nameof(channelNum), "Channel number must be between 0 and 15.");
+            this._channelMuteStatus[channelNum] = true;
+            MidiDevice.Device.SendShortMsg((byte)(0xB0 | channelNum), new byte[] { 123, 0 }); //All Notes Off
+        }
 
+        public void UnmuteChannel(byte channelNum)
+        {
+            if (channelNum < 0 || channelNum > 15)
+                throw new ArgumentOutOfRangeException(nameof(channelNum), "Channel number must be between 0 and 15.");
+            this._channelMuteStatus[channelNum] = false;
+        }
+
+        public void SetMuteAll(bool mute)
+        {
+            this.IsMutedAll = mute;
+            if (mute)
+            {
+                for (byte ch = 0; ch < 16; ch++)
+                {
+                    MidiDevice.Device.SendShortMsg((byte)(0xB0 | ch), new byte[] { 123, 0 }); //All Notes Off
+                }
             }
+        }
+
+        public void ToggleMuteAll()
+        {
+            SetMuteAll(!this.IsMutedAll);
         }
 
         private void ProcessingLoop(CancellationToken token)
@@ -265,10 +295,11 @@ namespace OKDPlayer
                         var currentEvent = this.ptrack.PTrackAbsoluteEvents[_currentIndex];
                         //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- eveent: {currentEvent.Data}");
                         byte status = this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status;
+                        byte channel = (byte)(status & 0x0F);
                         if (status == 0xF0)
                         {
                             //check master volume SysEx
-                            if (this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData.AsSpan().StartsWith(new byte[] { 0xF0, 0x43, 0x75, 0x72, 0x20 ,0x30, 6, 4 }))
+                            if (this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData.AsSpan().StartsWith(new byte[] { 0xF0, 0x43, 0x75, 0x72, 0x20, 0x30, 6, 4 }))
                             {
                                 //ignore master volume SysEx
                                 Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- Ignore MasterVol SysEx: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
@@ -277,13 +308,13 @@ namespace OKDPlayer
                                 MidiDevice.Device.SendSysEx(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData);
                             //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- SysEx event: {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].FullSysExData)}");
                         }
-                        else if(status == 0xF8) //ADPCM Note ON
+                        else if (status == 0xF8) //ADPCM Note ON
                         {
                             if (this._pcmChorusData != null)
                             {
                                 Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- ADPCM Note ON event (F8) received. {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data)}");
 
-                                
+
                                 byte pcmIndex = this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data[1];
                                 pcmChorusPlayer.PlayIndexFrom127(pcmIndex, this._backChorusVolume);
 
@@ -291,13 +322,31 @@ namespace OKDPlayer
                             }
 
                         }
-                        else if (status == 0xFA) {
+                        else if (status == 0xFA)
+                        {
                             Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- ADPCM Vol set event (FA) received. {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data)}");
-                            
+
 
                             this._backChorusVolume = this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data[0];
                         }
                         else if (status == 0xFD) { } //skip FD
+                        else if ((status & 0xF0) ==  0x90 ||
+                            (status & 0xF0) == 0x80)
+                        {
+                            //byte channel = (byte)(this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status & 0x0f);
+                            //Console.WriteLine("channel=" + channel + " mute=" + this._channelMuteStatus[channel]);
+                            if(!IsMutedAll)
+                            {
+                                if (!this._channelMuteStatus[channel])
+                                {
+                                    MidiDevice.Device.SendShortMsg(
+                                       this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status,
+                                       this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data);
+                                }
+                            }
+                           
+                            
+                        }
                         else
                         {
                             //Console.WriteLine($"vT: {currentVirtualTime:D5}ms --- Send MIDI event: status {this.ptrack.PTrackAbsoluteEvents[_currentIndex].Status:X2} {BitConverter.ToString(this.ptrack.PTrackAbsoluteEvents[_currentIndex].Data)}");
