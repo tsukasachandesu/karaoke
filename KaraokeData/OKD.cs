@@ -9,7 +9,6 @@ using System.Runtime.InteropServices.ComTypes;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 public class OKDHeader
 {
@@ -796,6 +795,184 @@ public class OKD
             track.ConvertToAbsoluteTimeTrack(GetPTrackInfoByID(track.TrackID));
         }
 
+    }
+
+    public void SaveAsMidi(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            throw new ArgumentException("Output MIDI file path must be provided.", nameof(filePath));
+        }
+
+        if (this.PTracks == null || this.PTracks.Length == 0)
+        {
+            throw new InvalidOperationException("OKD data must be loaded before exporting to MIDI.");
+        }
+
+        string directory = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        const ushort ticksPerQuarterNote = 1000;
+
+        using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false))
+        {
+            WriteMidiHeader(writer, (ushort)(this.PTracks.Length + 1), ticksPerQuarterNote);
+            WriteConductorTrack(writer);
+
+            foreach (var track in this.PTracks)
+            {
+                WriteMidiTrack(writer, track);
+            }
+        }
+    }
+
+    private static void WriteMidiHeader(BinaryWriter writer, ushort trackCount, ushort ticksPerQuarterNote)
+    {
+        writer.Write(Encoding.ASCII.GetBytes("MThd"));
+        WriteInt32BE(writer, 6);
+        WriteInt16BE(writer, 1);
+        WriteInt16BE(writer, trackCount);
+        WriteInt16BE(writer, ticksPerQuarterNote);
+    }
+
+    private static void WriteConductorTrack(BinaryWriter writer)
+    {
+        using (var trackStream = new MemoryStream())
+        using (var trackWriter = new BinaryWriter(trackStream, Encoding.UTF8, leaveOpen: true))
+        {
+            WriteVariableLengthQuantity(trackWriter, 0);
+            trackWriter.Write((byte)0xFF);
+            trackWriter.Write((byte)0x51);
+            trackWriter.Write((byte)0x03);
+            trackWriter.Write(new byte[] { 0x0F, 0x42, 0x40 });
+
+            WriteVariableLengthQuantity(trackWriter, 0);
+            trackWriter.Write((byte)0xFF);
+            trackWriter.Write((byte)0x58);
+            trackWriter.Write((byte)0x04);
+            trackWriter.Write(new byte[] { 0x04, 0x02, 0x18, 0x08 });
+
+            WriteVariableLengthQuantity(trackWriter, 0);
+            trackWriter.Write((byte)0xFF);
+            trackWriter.Write((byte)0x2F);
+            trackWriter.Write((byte)0x00);
+
+            trackWriter.Flush();
+            WriteTrackChunk(writer, trackStream);
+        }
+    }
+
+    private static void WriteMidiTrack(BinaryWriter writer, OKDPTrack track)
+    {
+        using (var trackStream = new MemoryStream())
+        using (var trackWriter = new BinaryWriter(trackStream, Encoding.UTF8, leaveOpen: true))
+        {
+            string trackName = $"PTrack {track.TrackID}";
+            byte[] nameBytes = Encoding.UTF8.GetBytes(trackName);
+            WriteVariableLengthQuantity(trackWriter, 0);
+            trackWriter.Write((byte)0xFF);
+            trackWriter.Write((byte)0x03);
+            WriteVariableLengthQuantity(trackWriter, (uint)nameBytes.Length);
+            trackWriter.Write(nameBytes);
+
+            uint lastWrittenTime = 0;
+            if (track.PTrackAbsoluteEvents != null && track.PTrackAbsoluteEvents.Count > 0)
+            {
+                foreach (var ev in track.PTrackAbsoluteEvents
+                    .Select((evt, index) => (evt, index))
+                    .OrderBy(item => item.evt.AbsoluteTime)
+                    .ThenBy(item => item.index)
+                    .Select(item => item.evt))
+                {
+                    TryWriteMidiEvent(trackWriter, ev, ref lastWrittenTime);
+                }
+            }
+
+            WriteVariableLengthQuantity(trackWriter, 0);
+            trackWriter.Write((byte)0xFF);
+            trackWriter.Write((byte)0x2F);
+            trackWriter.Write((byte)0x00);
+
+            trackWriter.Flush();
+            WriteTrackChunk(writer, trackStream);
+        }
+    }
+
+    private static bool TryWriteMidiEvent(BinaryWriter writer, PTrackAbsoluteTimeEvent ev, ref uint lastWrittenTime)
+    {
+        if (ev == null)
+        {
+            return false;
+        }
+
+        uint eventTime = ev.AbsoluteTime;
+        uint delta = eventTime >= lastWrittenTime ? eventTime - lastWrittenTime : 0;
+
+        if (ev.Status == 0xF0 || ev.Status == 0xF7)
+        {
+            byte[] sysexData = ev.Data ?? Array.Empty<byte>();
+            WriteVariableLengthQuantity(writer, delta);
+            writer.Write(ev.Status);
+            WriteVariableLengthQuantity(writer, (uint)sysexData.Length);
+            writer.Write(sysexData);
+            lastWrittenTime = eventTime;
+            return true;
+        }
+
+        byte statusType = (byte)(ev.Status & 0xF0);
+        if (statusType >= 0x80 && statusType <= 0xE0)
+        {
+            WriteVariableLengthQuantity(writer, delta);
+            writer.Write(ev.Status);
+            if (ev.Data != null && ev.Data.Length > 0)
+            {
+                writer.Write(ev.Data);
+            }
+            lastWrittenTime = eventTime;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void WriteTrackChunk(BinaryWriter writer, MemoryStream trackStream)
+    {
+        writer.Write(Encoding.ASCII.GetBytes("MTrk"));
+        WriteInt32BE(writer, (int)trackStream.Length);
+        writer.Write(trackStream.ToArray());
+    }
+
+    private static void WriteInt16BE(BinaryWriter writer, ushort value)
+    {
+        byte[] bytes = BitConverter.GetBytes(value);
+        Array.Reverse(bytes);
+        writer.Write(bytes);
+    }
+
+    private static void WriteInt32BE(BinaryWriter writer, int value)
+    {
+        byte[] bytes = BitConverter.GetBytes(value);
+        Array.Reverse(bytes);
+        writer.Write(bytes);
+    }
+
+    private static void WriteVariableLengthQuantity(BinaryWriter writer, uint value)
+    {
+        byte[] buffer = new byte[5];
+        int index = 0;
+        buffer[index++] = (byte)(value & 0x7F);
+        while ((value >>= 7) > 0)
+        {
+            buffer[index++] = (byte)((value & 0x7F) | 0x80);
+        }
+        for (int i = index - 1; i >= 0; i--)
+        {
+            writer.Write(buffer[i]);
+        }
     }
 
     private void ResetTG(byte port, byte id, byte mode)

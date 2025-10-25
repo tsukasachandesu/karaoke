@@ -14,7 +14,8 @@ namespace OKDPlayer
         private static bool guideMelMuted = false;
         private static int syncoffsetAdpcm = 0;
         private static string inputOKDFile = string.Empty;
-        private static int[] midiDevIndexes = new int[] { };
+        private static int[] midiDevIndexes = Array.Empty<int>();
+        private static string midiOutputFile = null;
         public class OKDPlayerCommandlineOptions
         {
             [Option('m', "midi-devices", Required = false, HelpText = "Set midi playback devices as number, Ex: 1 2 3 4")]
@@ -22,6 +23,9 @@ namespace OKDPlayer
 
             [Option('i', "input-okd-file", Required = true, HelpText = "Path to OKD file to play.")]
             public string inputOKDFile { get; set; }
+
+            [Value(0, MetaName = "midi-output", Required = false, HelpText = "Path to save the converted MIDI file.")]
+            public string MidiOutputFile { get; set; }
 
             [Option('g', "guide-melody-mute", Required = false, HelpText = "Mute guide melody (PTrack 1, Channel 8) on start.")]
             public bool muteGuideMelody { get; set; }
@@ -45,12 +49,8 @@ namespace OKDPlayer
                  guideMelMuted = o.muteGuideMelody;
                  syncoffsetAdpcm = o.syncOffsetAdpcm;
                  inputOKDFile = o.inputOKDFile;
-                 midiDevIndexes = new int[o.midiDevIndexs.Count()];
-
-                 for (int i = 0; i < o.midiDevIndexs.Count(); i++)
-                 {
-                     midiDevIndexes[i] = o.midiDevIndexs.ElementAt(i);
-                 }
+                 midiDevIndexes = o.midiDevIndexs?.ToArray() ?? Array.Empty<int>();
+                 midiOutputFile = string.IsNullOrWhiteSpace(o.MidiOutputFile) ? null : o.MidiOutputFile;
              })
             
             .WithNotParsed((e) =>
@@ -76,6 +76,13 @@ namespace OKDPlayer
             okd.LoadFromFile(inputOKDFile, File.Exists("key.bin") ? "key.bin" : null);
 
             Console.WriteLine($"OKD file loaded successfully. PTrack Count :{okd.PTracks.Length}");
+
+            if (!string.IsNullOrWhiteSpace(midiOutputFile))
+            {
+                okd.SaveAsMidi(midiOutputFile);
+                Console.WriteLine($"MIDI file saved to: {midiOutputFile}");
+                return;
+            }
 
             //split input by space 
             //string[] inputParts = null;
