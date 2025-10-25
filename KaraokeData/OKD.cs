@@ -198,6 +198,7 @@ public class OKD
     public OKDHeader Header { get; private set; }
     public OKDPTrackInfo PTrackInfo { get; private set; }
     public OKDPTrack[] PTracks { get; private set; }
+    public Dictionary<byte, OKDMTrack> MTracks { get; private set; } = new Dictionary<byte, OKDMTrack>();
     public OKDMIDIDevice[] MIDIDev { get; private set; }
     public uint FirstNoteONTime { get; private set; } = 0;
     public uint TotalPlayTime { get; private set; } = 0;
@@ -655,6 +656,8 @@ public class OKD
         okdFileReader.Close();
         okdFileReader.Dispose();
 
+        this.MTracks.Clear();
+
         BinaryReader okdReader = new BinaryReader(new MemoryStream(okdData));
         MemoryStream stream = new MemoryStream();
 
@@ -738,7 +741,18 @@ public class OKD
                 this.PTrackInfo = extendedTrackInfo;
             }
 
-            
+
+            if (chunk.ChunkId.Length == 4 && chunk.ChunkId[0] == 0xFF && chunk.ChunkId[1] == (byte)'M' && chunk.ChunkId[2] == (byte)'R')
+            {
+                OKDMTrack mTrack = new OKDMTrack
+                {
+                    TrackId = chunk.ChunkId[3],
+                };
+                mTrack.Parse(chunk.Data);
+                this.MTracks[mTrack.TrackId] = mTrack;
+            }
+
+
 
             //PR*
             if (chunk.ChunkId.AsSpan().StartsWith(new byte[] { 0xff, (byte)'P', (byte)'R' }))
@@ -800,32 +814,50 @@ public class OKD
     public void SaveAsMidi(string filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath))
-        {
             throw new ArgumentException("Output MIDI file path must be provided.", nameof(filePath));
-        }
 
         if (this.PTracks == null || this.PTracks.Length == 0)
-        {
             throw new InvalidOperationException("OKD data must be loaded before exporting to MIDI.");
-        }
 
         string directory = Path.GetDirectoryName(filePath);
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-        {
             Directory.CreateDirectory(directory);
+
+        const int ticksPerQuarterNote = 480;
+
+        var tempoChanges = GetTempoChanges();
+        var timeSignatureChanges = GetTimeSignatureChanges();
+
+        var timeConverter = new MidiTimeConverter(ticksPerQuarterNote);
+        foreach (var tempo in tempoChanges)
+        {
+            timeConverter.AddTempoChange(tempo.TimeMs, tempo.TempoBpm);
+        }
+        if (!timeConverter.HasTempoChanges)
+        {
+            timeConverter.AddTempoChange(0, 125);
         }
 
-        const ushort ticksPerQuarterNote = 1000;
+        var trackEvents = CollectTrackEvents();
+        ushort trackCount = OKDPTrack.totalChannels;
 
         using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
         using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false))
         {
-            WriteMidiHeader(writer, (ushort)(this.PTracks.Length + 1), ticksPerQuarterNote);
-            WriteConductorTrack(writer);
+            WriteMidiHeader(writer, trackCount, (ushort)ticksPerQuarterNote);
 
-            foreach (var track in this.PTracks)
+            for (int trackIndex = 0; trackIndex < trackCount; trackIndex++)
             {
-                WriteMidiTrack(writer, track);
+                IEnumerable<MetaEvent> metaEvents = trackIndex == 0
+                    ? BuildMetaEvents(tempoChanges, timeSignatureChanges)
+                    : Array.Empty<MetaEvent>();
+
+                WriteMidiTrack(
+                    writer,
+                    trackIndex,
+                    trackEvents[trackIndex],
+                    metaEvents,
+                    timeConverter);
             }
         }
     }
@@ -839,39 +871,172 @@ public class OKD
         WriteInt16BE(writer, ticksPerQuarterNote);
     }
 
-    private static void WriteConductorTrack(BinaryWriter writer)
+    private List<(PTrackAbsoluteTimeEvent Event, int Order)>[] CollectTrackEvents()
     {
-        using (var trackStream = new MemoryStream())
-        using (var trackWriter = new BinaryWriter(trackStream, Encoding.UTF8, leaveOpen: true))
+        var perTrackEvents = new List<(PTrackAbsoluteTimeEvent Event, int Order)>[OKDPTrack.totalChannels];
+        for (int i = 0; i < perTrackEvents.Length; i++)
         {
-            WriteVariableLengthQuantity(trackWriter, 0);
-            trackWriter.Write((byte)0xFF);
-            trackWriter.Write((byte)0x51);
-            trackWriter.Write((byte)0x03);
-            trackWriter.Write(new byte[] { 0x0F, 0x42, 0x40 });
+            perTrackEvents[i] = new List<(PTrackAbsoluteTimeEvent Event, int Order)>();
+        }
 
-            WriteVariableLengthQuantity(trackWriter, 0);
-            trackWriter.Write((byte)0xFF);
-            trackWriter.Write((byte)0x58);
-            trackWriter.Write((byte)0x04);
-            trackWriter.Write(new byte[] { 0x04, 0x02, 0x18, 0x08 });
+        int order = 0;
+        foreach (var track in this.PTracks)
+        {
+            if (track.PTrackAbsoluteEvents == null)
+                continue;
 
-            WriteVariableLengthQuantity(trackWriter, 0);
-            trackWriter.Write((byte)0xFF);
-            trackWriter.Write((byte)0x2F);
-            trackWriter.Write((byte)0x00);
+            foreach (var ev in track.PTrackAbsoluteEvents)
+            {
+                if (ev.Track >= perTrackEvents.Length)
+                    continue;
 
-            trackWriter.Flush();
-            WriteTrackChunk(writer, trackStream);
+                perTrackEvents[ev.Track].Add((ev, order++));
+            }
+        }
+
+        return perTrackEvents;
+    }
+
+    private List<(uint TimeMs, double TempoBpm)> GetTempoChanges()
+    {
+        var tempos = new List<(uint TimeMs, double TempoBpm)>();
+
+        OKDMTrack primaryTrack = this.MTracks
+            .OrderBy(pair => pair.Key)
+            .Select(pair => pair.Value)
+            .FirstOrDefault();
+
+        if (primaryTrack?.Tempos != null)
+        {
+            foreach (var tempo in primaryTrack.Tempos)
+            {
+                tempos.Add((tempo.absoluteTime, tempo.tempo));
+            }
+        }
+
+        if (tempos.Count == 0)
+        {
+            tempos.Add((0u, 125));
+        }
+
+        tempos = tempos
+            .GroupBy(t => t.TimeMs)
+            .Select(g => (TimeMs: g.Key, TempoBpm: g.Last().TempoBpm))
+            .OrderBy(t => t.TimeMs)
+            .ToList();
+
+        if (tempos.Count > 0 && tempos[0].TimeMs > 0)
+        {
+            tempos.Insert(0, (0u, tempos[0].TempoBpm));
+        }
+
+        return tempos;
+    }
+
+    private List<(uint TimeMs, byte Numerator, byte Denominator)> GetTimeSignatureChanges()
+    {
+        var timeSignatures = new List<(uint TimeMs, byte Numerator, byte Denominator)>();
+
+        OKDMTrack primaryTrack = this.MTracks
+            .OrderBy(pair => pair.Key)
+            .Select(pair => pair.Value)
+            .FirstOrDefault();
+
+        if (primaryTrack?.TimeSignatures != null)
+        {
+            foreach (var ts in primaryTrack.TimeSignatures)
+            {
+                uint clampedNumerator = ts.numerator;
+                if (clampedNumerator < 1)
+                    clampedNumerator = 1;
+                else if (clampedNumerator > 16)
+                    clampedNumerator = 16;
+
+                uint clampedDenominator = ts.denominator;
+                if (clampedDenominator < 1)
+                    clampedDenominator = 1;
+
+                timeSignatures.Add((ts.absoluteTime, (byte)clampedNumerator, (byte)Math.Min(clampedDenominator, (uint)32)));
+            }
+        }
+
+        if (timeSignatures.Count == 0)
+        {
+            timeSignatures.Add((0u, 4, 4));
+        }
+
+        timeSignatures = timeSignatures
+            .GroupBy(ts => ts.TimeMs)
+            .Select(g => g.Last())
+            .OrderBy(ts => ts.TimeMs)
+            .ToList();
+
+        if (timeSignatures[0].TimeMs > 0)
+        {
+            timeSignatures.Insert(0, (0u, timeSignatures[0].Numerator, timeSignatures[0].Denominator));
+        }
+
+        return timeSignatures;
+    }
+
+    private static IEnumerable<MetaEvent> BuildMetaEvents(
+        IReadOnlyList<(uint TimeMs, double TempoBpm)> tempos,
+        IReadOnlyList<(uint TimeMs, byte Numerator, byte Denominator)> timeSignatures)
+    {
+        foreach (var tempo in tempos)
+        {
+            int microsecondsPerQuarter = (int)Math.Round(60000000.0 / tempo.TempoBpm);
+            if (microsecondsPerQuarter < 1)
+                microsecondsPerQuarter = 1;
+
+            byte[] data = new byte[]
+            {
+                (byte)((microsecondsPerQuarter >> 16) & 0xFF),
+                (byte)((microsecondsPerQuarter >> 8) & 0xFF),
+                (byte)(microsecondsPerQuarter & 0xFF),
+            };
+
+            yield return new MetaEvent(tempo.TimeMs, 0x51, data);
+        }
+
+        foreach (var signature in timeSignatures)
+        {
+            byte denominatorExp = ToTimeSignatureDenominatorByte(signature.Denominator);
+            byte[] data = new byte[] { signature.Numerator, denominatorExp, 24, 8 };
+            yield return new MetaEvent(signature.TimeMs, 0x58, data);
         }
     }
 
-    private static void WriteMidiTrack(BinaryWriter writer, OKDPTrack track)
+    private static byte ToTimeSignatureDenominatorByte(uint denominator)
+    {
+        if (denominator < 1)
+            return 2; // default to 4/4
+
+        uint value = denominator;
+        byte exponent = 0;
+        while (value > 1 && value % 2 == 0)
+        {
+            value /= 2;
+            exponent++;
+        }
+
+        if (value != 1)
+            return 2; // fallback to denominator 4
+
+        return exponent;
+    }
+
+    private static void WriteMidiTrack(
+        BinaryWriter writer,
+        int trackIndex,
+        IEnumerable<(PTrackAbsoluteTimeEvent Event, int Order)> eventsWithOrder,
+        IEnumerable<MetaEvent> metaEvents,
+        MidiTimeConverter timeConverter)
     {
         using (var trackStream = new MemoryStream())
         using (var trackWriter = new BinaryWriter(trackStream, Encoding.UTF8, leaveOpen: true))
         {
-            string trackName = $"PTrack {track.TrackID}";
+            string trackName = $"Port {trackIndex / OKDPTrack.channelsPerPort} Ch {trackIndex % OKDPTrack.channelsPerPort}";
             byte[] nameBytes = Encoding.UTF8.GetBytes(trackName);
             WriteVariableLengthQuantity(trackWriter, 0);
             trackWriter.Write((byte)0xFF);
@@ -879,17 +1044,63 @@ public class OKD
             WriteVariableLengthQuantity(trackWriter, (uint)nameBytes.Length);
             trackWriter.Write(nameBytes);
 
-            uint lastWrittenTime = 0;
-            if (track.PTrackAbsoluteEvents != null && track.PTrackAbsoluteEvents.Count > 0)
+            byte port = (byte)(trackIndex / OKDPTrack.channelsPerPort);
+            WriteVariableLengthQuantity(trackWriter, 0);
+            trackWriter.Write((byte)0xFF);
+            trackWriter.Write((byte)0x21);
+            trackWriter.Write((byte)0x01);
+            trackWriter.Write(port);
+
+            var timedEvents = new List<TimedTrackEvent>();
+            int order = 0;
+
+            foreach (var meta in metaEvents)
             {
-                foreach (var ev in track.PTrackAbsoluteEvents
-                    .Select((evt, index) => (evt, index))
-                    .OrderBy(item => item.evt.AbsoluteTime)
-                    .ThenBy(item => item.index)
-                    .Select(item => item.evt))
+                MetaEvent metaEvent = meta;
+                timedEvents.Add(new TimedTrackEvent(metaEvent.Time, priority: 0, order: order++, writerAction: bw =>
                 {
-                    TryWriteMidiEvent(trackWriter, ev, ref lastWrittenTime);
-                }
+                    bw.Write((byte)0xFF);
+                    bw.Write(metaEvent.Type);
+                    WriteVariableLengthQuantity(bw, (uint)metaEvent.Data.Length);
+                    bw.Write(metaEvent.Data);
+                }));
+            }
+
+            var sortedEvents = eventsWithOrder
+                .OrderBy(e => e.Event.AbsoluteTime)
+                .ThenBy(e => e.Order)
+                .ToList();
+
+            foreach (var entry in sortedEvents)
+            {
+                PTrackAbsoluteTimeEvent ev = entry.Event;
+                timedEvents.Add(new TimedTrackEvent(ev.AbsoluteTime, priority: 1, order: order++, writerAction: bw =>
+                {
+                    WriteMidiEventData(bw, ev);
+                }));
+            }
+
+            timedEvents.Sort((a, b) =>
+            {
+                int cmp = a.Time.CompareTo(b.Time);
+                if (cmp != 0)
+                    return cmp;
+
+                cmp = a.Priority.CompareTo(b.Priority);
+                if (cmp != 0)
+                    return cmp;
+
+                return a.Order.CompareTo(b.Order);
+            });
+
+            uint lastTick = 0;
+            foreach (var timedEvent in timedEvents)
+            {
+                uint eventTick = (uint)Math.Max(0, timeConverter.MillisecondsToTicks(timedEvent.Time));
+                uint delta = eventTick >= lastTick ? eventTick - lastTick : 0;
+                WriteVariableLengthQuantity(trackWriter, delta);
+                timedEvent.WriterAction(trackWriter);
+                lastTick = eventTick;
             }
 
             WriteVariableLengthQuantity(trackWriter, 0);
@@ -902,41 +1113,52 @@ public class OKD
         }
     }
 
-    private static bool TryWriteMidiEvent(BinaryWriter writer, PTrackAbsoluteTimeEvent ev, ref uint lastWrittenTime)
+    private static void WriteMidiEventData(BinaryWriter writer, PTrackAbsoluteTimeEvent ev)
     {
-        if (ev == null)
-        {
-            return false;
-        }
-
-        uint eventTime = ev.AbsoluteTime;
-        uint delta = eventTime >= lastWrittenTime ? eventTime - lastWrittenTime : 0;
-
         if (ev.Status == 0xF0 || ev.Status == 0xF7)
         {
             byte[] sysexData = ev.Data ?? Array.Empty<byte>();
-            WriteVariableLengthQuantity(writer, delta);
             writer.Write(ev.Status);
             WriteVariableLengthQuantity(writer, (uint)sysexData.Length);
             writer.Write(sysexData);
-            lastWrittenTime = eventTime;
-            return true;
+            return;
         }
 
-        byte statusType = (byte)(ev.Status & 0xF0);
-        if (statusType >= 0x80 && statusType <= 0xE0)
+        writer.Write(ev.Status);
+        if (ev.Data != null && ev.Data.Length > 0)
         {
-            WriteVariableLengthQuantity(writer, delta);
-            writer.Write(ev.Status);
-            if (ev.Data != null && ev.Data.Length > 0)
-            {
-                writer.Write(ev.Data);
-            }
-            lastWrittenTime = eventTime;
-            return true;
+            writer.Write(ev.Data);
+        }
+    }
+
+    private readonly struct MetaEvent
+    {
+        public MetaEvent(uint time, byte type, byte[] data)
+        {
+            Time = time;
+            Type = type;
+            Data = data;
         }
 
-        return false;
+        public uint Time { get; }
+        public byte Type { get; }
+        public byte[] Data { get; }
+    }
+
+    private readonly struct TimedTrackEvent
+    {
+        public TimedTrackEvent(uint time, int priority, int order, Action<BinaryWriter> writerAction)
+        {
+            Time = time;
+            Priority = priority;
+            Order = order;
+            WriterAction = writerAction;
+        }
+
+        public uint Time { get; }
+        public int Priority { get; }
+        public int Order { get; }
+        public Action<BinaryWriter> WriterAction { get; }
     }
 
     private static void WriteTrackChunk(BinaryWriter writer, MemoryStream trackStream)
