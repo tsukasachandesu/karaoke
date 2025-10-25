@@ -17,12 +17,13 @@ This software can read and play DAM KaraOKe Data (OKD) files.
 ### Usage
 
 ```bash
-OKDPlayer.exe -i <path_to_okd_file> <options>
+OKDPlayer.exe -i <path_to_okd_file> [options]
 Options:
   -i, --input-okd-file     Path to OKD file to play
   -m, --midi-devices       Set midi playback devices as number, Ex: 1 2 3 4
   -g, --guide-melody-mute  Mute guide melody (PTrack 1, Channel 8) on start
   -t, --transpose          Transpose key in semitones (positive or negative)
+  -o, --midi-output        Path to save the converted MIDI file
   -s, --sync-offset-adpcm  Sync offset in milliseconds to apply when ADPCM chorus is present.
   -h, --help			   Display help information
 ```
