@@ -23,6 +23,7 @@ import logging
 import os
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
@@ -139,23 +140,34 @@ def run_parallel(
     if total == 0:
         return
 
+    worker = partial(
+        convert_single,
+        exe,
+        skip_existing=skip_existing,
+        dry_run=dry_run,
+    )
+
+    completed = 0
+    successes = 0
+    failures = 0
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futures = {
-            pool.submit(convert_single, exe, path, skip_existing, dry_run): path
-            for path in okd_files
-        }
-        for future in concurrent.futures.as_completed(futures):
-            path = futures[future]
-            try:
-                _, ok, status = future.result()
-            except Exception as exc:  # pragma: no cover - defensive programming
-                logging.exception("Unexpected failure for %s: %s", path, exc)
-                ok = False
-                status = str(exc)
+        for path, ok, status in pool.map(worker, okd_files):
+            completed += 1
+            progress = f"({completed}/{total}, {completed / total:.1%})"
             if ok:
-                logging.info("✔ %s", path)
+                successes += 1
+                logging.info("%s ✔ %s", progress, path)
             else:
-                logging.warning("✖ %s (%s)", path, status)
+                failures += 1
+                logging.warning("%s ✖ %s (%s)", progress, path, status)
+
+    logging.info(
+        "Finished conversion: %d succeeded, %d failed, %d total.",
+        successes,
+        failures,
+        total,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
