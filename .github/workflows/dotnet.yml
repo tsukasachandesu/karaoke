@@ -45,7 +45,7 @@ jobs:
       - name: Archive published binaries
         run: |
           mkdir -p artifacts
-          zip -j "artifacts/${{ matrix.target.output }}.zip" ./publish/${{ matrix.target.output }}*
+          zip -j "artifacts/${{ matrix.target.output }}.zip" ./publish/*
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

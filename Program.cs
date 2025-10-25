@@ -24,7 +24,7 @@ namespace OKDPlayer
             [Option('i', "input-okd-file", Required = true, HelpText = "Path to OKD file to play.")]
             public string inputOKDFile { get; set; }
 
-            [Value(0, MetaName = "midi-output", Required = false, HelpText = "Path to save the converted MIDI file.")]
+            [Option('o', "midi-output", Required = false, HelpText = "Path to save the converted MIDI file.")]
             public string MidiOutputFile { get; set; }
 
             [Option('g', "guide-melody-mute", Required = false, HelpText = "Mute guide melody (PTrack 1, Channel 8) on start.")]
