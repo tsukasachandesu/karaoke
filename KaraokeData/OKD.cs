@@ -198,6 +198,7 @@ public class OKD
     public OKDHeader Header { get; private set; }
     public OKDPTrackInfo PTrackInfo { get; private set; }
     public OKDPTrack[] PTracks { get; private set; }
+    public OKDMTrack[] MTracks { get; private set; }
     public OKDMIDIDevice[] MIDIDev { get; private set; }
     public uint FirstNoteONTime { get; private set; } = 0;
     public uint TotalPlayTime { get; private set; } = 0;
@@ -722,6 +723,7 @@ public class OKD
 
         //Process chunks
         List<OKDPTrack> tracks = new List<OKDPTrack>();
+        List<OKDMTrack> mTracks = new List<OKDMTrack>();
         byte pTrackCount = 0;
         foreach (var chunk in this.Chunks)
         {
@@ -739,6 +741,17 @@ public class OKD
             }
 
             
+
+            //MR*
+            if (chunk.ChunkId.AsSpan().StartsWith(new byte[] { 0xff, (byte)'M', (byte)'R' }))
+            {
+                OKDMTrack mtrack = new OKDMTrack
+                {
+                    TrackID = chunk.ChunkId[3]
+                };
+                mtrack.Parse(chunk.Data);
+                mTracks.Add(mtrack);
+            }
 
             //PR*
             if (chunk.ChunkId.AsSpan().StartsWith(new byte[] { 0xff, (byte)'P', (byte)'R' }))
@@ -789,6 +802,7 @@ public class OKD
         }
 
         this.PTracks = tracks.ToArray();
+        this.MTracks = mTracks.ToArray();
 
         foreach (var track in this.PTracks)
         {
@@ -815,17 +829,79 @@ public class OKD
             Directory.CreateDirectory(directory);
         }
 
-        const ushort ticksPerQuarterNote = 1000;
+        const int ticksPerQuarterNote = 480;
+
+        List<(uint timeMs, double tempoBpm)> tempoEvents = new List<(uint, double)>();
+        List<(uint timeMs, byte numerator, byte denominator)> timeSignatureEvents = new List<(uint, byte, byte)>();
+
+        OKDMTrack tempoSource = this.MTracks?.OrderBy(mt => mt.TrackID).FirstOrDefault();
+        if (tempoSource != null)
+        {
+            foreach (var tempo in tempoSource.Tempos ?? Array.Empty<(uint, uint)>())
+            {
+                if (tempo.tempo == 0)
+                    continue;
+                tempoEvents.Add((tempo.absoluteTime, tempo.tempo));
+            }
+
+            foreach (var ts in tempoSource.TimeSignatures ?? Array.Empty<(uint, uint, uint)>())
+            {
+                byte numerator = (byte)Math.Clamp(ts.data1, 1u, 0xFFu);
+                uint denominatorValue = ts.data2 > 0 ? ts.data2 : 4;
+                denominatorValue = NormalizeTimeSignatureDenominator(denominatorValue);
+                timeSignatureEvents.Add((ts.absoluteTime, numerator, (byte)denominatorValue));
+            }
+        }
+
+        if (tempoEvents.Count == 0)
+        {
+            tempoEvents.Add((0u, 125.0));
+        }
+
+        tempoEvents = tempoEvents
+            .GroupBy(t => t.timeMs)
+            .Select(g => g.Last())
+            .OrderBy(t => t.timeMs)
+            .ToList();
+
+        if (tempoEvents[0].timeMs > 0)
+        {
+            tempoEvents.Insert(0, (0u, tempoEvents[0].tempoBpm));
+        }
+
+        if (timeSignatureEvents.Count == 0)
+        {
+            timeSignatureEvents.Add((0u, (byte)4, (byte)4));
+        }
+        else
+        {
+            timeSignatureEvents = timeSignatureEvents
+                .GroupBy(ts => ts.timeMs)
+                .Select(g => g.Last())
+                .OrderBy(ts => ts.timeMs)
+                .ToList();
+            if (timeSignatureEvents[0].timeMs > 0)
+            {
+                var first = timeSignatureEvents[0];
+                timeSignatureEvents.Insert(0, (0u, first.numerator, first.denominator));
+            }
+        }
+
+        MidiTimeConverter timeConverter = new MidiTimeConverter(ticksPerQuarterNote);
+        foreach (var tempo in tempoEvents)
+        {
+            timeConverter.AddTempoChange(tempo.timeMs, tempo.tempoBpm);
+        }
 
         using (var stream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None))
         using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false))
         {
-            WriteMidiHeader(writer, (ushort)(this.PTracks.Length + 1), ticksPerQuarterNote);
-            WriteConductorTrack(writer);
+            WriteMidiHeader(writer, (ushort)(this.PTracks.Length + 1), (ushort)ticksPerQuarterNote);
+            WriteConductorTrack(writer, timeConverter, tempoEvents, timeSignatureEvents);
 
             foreach (var track in this.PTracks)
             {
-                WriteMidiTrack(writer, track);
+                WriteMidiTrack(writer, track, timeConverter);
             }
         }
     }
@@ -839,22 +915,74 @@ public class OKD
         WriteInt16BE(writer, ticksPerQuarterNote);
     }
 
-    private static void WriteConductorTrack(BinaryWriter writer)
+    private static void WriteConductorTrack(
+        BinaryWriter writer,
+        MidiTimeConverter timeConverter,
+        IReadOnlyList<(uint timeMs, double tempoBpm)> tempoEvents,
+        IReadOnlyList<(uint timeMs, byte numerator, byte denominator)> timeSignatureEvents)
     {
         using (var trackStream = new MemoryStream())
         using (var trackWriter = new BinaryWriter(trackStream, Encoding.UTF8, leaveOpen: true))
         {
-            WriteVariableLengthQuantity(trackWriter, 0);
-            trackWriter.Write((byte)0xFF);
-            trackWriter.Write((byte)0x51);
-            trackWriter.Write((byte)0x03);
-            trackWriter.Write(new byte[] { 0x0F, 0x42, 0x40 });
+            var metaEvents = new List<(int tick, int order, byte metaType, byte[] data)>();
+            int order = 0;
 
-            WriteVariableLengthQuantity(trackWriter, 0);
-            trackWriter.Write((byte)0xFF);
-            trackWriter.Write((byte)0x58);
-            trackWriter.Write((byte)0x04);
-            trackWriter.Write(new byte[] { 0x04, 0x02, 0x18, 0x08 });
+            byte[] conductorName = Encoding.UTF8.GetBytes("Conductor");
+            metaEvents.Add((0, order++, 0x03, conductorName));
+
+            foreach (var tempo in tempoEvents)
+            {
+                int tick = timeConverter.MillisecondsToTicks(tempo.timeMs);
+                int microsecondsPerQuarter = (int)Math.Round(60_000_000.0 / tempo.tempoBpm);
+                microsecondsPerQuarter = Math.Clamp(microsecondsPerQuarter, 1, 0xFFFFFF);
+                byte[] tempoData = new byte[]
+                {
+                    (byte)((microsecondsPerQuarter >> 16) & 0xFF),
+                    (byte)((microsecondsPerQuarter >> 8) & 0xFF),
+                    (byte)(microsecondsPerQuarter & 0xFF)
+                };
+                metaEvents.Add((tick, order++, 0x51, tempoData));
+            }
+
+            foreach (var ts in timeSignatureEvents)
+            {
+                int tick = timeConverter.MillisecondsToTicks(ts.timeMs);
+                uint denominatorValue = ts.denominator == 0 ? 1u : ts.denominator;
+                int exponent = 0;
+                uint value = 1;
+                while (value < denominatorValue && exponent < 7)
+                {
+                    value <<= 1;
+                    exponent++;
+                }
+
+                byte[] signatureData = new byte[]
+                {
+                    ts.numerator,
+                    (byte)exponent,
+                    24,
+                    8
+                };
+                metaEvents.Add((tick, order++, 0x58, signatureData));
+            }
+
+            metaEvents.Sort((a, b) =>
+            {
+                int tickCompare = a.tick.CompareTo(b.tick);
+                return tickCompare != 0 ? tickCompare : a.order.CompareTo(b.order);
+            });
+
+            uint lastTick = 0;
+            foreach (var meta in metaEvents)
+            {
+                uint delta = meta.tick >= lastTick ? (uint)(meta.tick - lastTick) : 0u;
+                WriteVariableLengthQuantity(trackWriter, delta);
+                trackWriter.Write((byte)0xFF);
+                trackWriter.Write(meta.metaType);
+                trackWriter.Write((byte)meta.data.Length);
+                trackWriter.Write(meta.data);
+                lastTick = (uint)meta.tick;
+            }
 
             WriteVariableLengthQuantity(trackWriter, 0);
             trackWriter.Write((byte)0xFF);
@@ -866,7 +994,7 @@ public class OKD
         }
     }
 
-    private static void WriteMidiTrack(BinaryWriter writer, OKDPTrack track)
+    private static void WriteMidiTrack(BinaryWriter writer, OKDPTrack track, MidiTimeConverter timeConverter)
     {
         using (var trackStream = new MemoryStream())
         using (var trackWriter = new BinaryWriter(trackStream, Encoding.UTF8, leaveOpen: true))
@@ -879,7 +1007,7 @@ public class OKD
             WriteVariableLengthQuantity(trackWriter, (uint)nameBytes.Length);
             trackWriter.Write(nameBytes);
 
-            uint lastWrittenTime = 0;
+            int lastWrittenTick = 0;
             if (track.PTrackAbsoluteEvents != null && track.PTrackAbsoluteEvents.Count > 0)
             {
                 foreach (var ev in track.PTrackAbsoluteEvents
@@ -888,7 +1016,7 @@ public class OKD
                     .ThenBy(item => item.index)
                     .Select(item => item.evt))
                 {
-                    TryWriteMidiEvent(trackWriter, ev, ref lastWrittenTime);
+                    TryWriteMidiEvent(trackWriter, ev, ref lastWrittenTick, timeConverter);
                 }
             }
 
@@ -902,15 +1030,16 @@ public class OKD
         }
     }
 
-    private static bool TryWriteMidiEvent(BinaryWriter writer, PTrackAbsoluteTimeEvent ev, ref uint lastWrittenTime)
+    private static bool TryWriteMidiEvent(BinaryWriter writer, PTrackAbsoluteTimeEvent ev, ref int lastWrittenTick, MidiTimeConverter timeConverter)
     {
         if (ev == null)
         {
             return false;
         }
 
-        uint eventTime = ev.AbsoluteTime;
-        uint delta = eventTime >= lastWrittenTime ? eventTime - lastWrittenTime : 0;
+        int eventTick = timeConverter.MillisecondsToTicks(ev.AbsoluteTime);
+        int deltaTick = eventTick - lastWrittenTick;
+        uint delta = deltaTick > 0 ? (uint)deltaTick : 0u;
 
         if (ev.Status == 0xF0 || ev.Status == 0xF7)
         {
@@ -919,7 +1048,7 @@ public class OKD
             writer.Write(ev.Status);
             WriteVariableLengthQuantity(writer, (uint)sysexData.Length);
             writer.Write(sysexData);
-            lastWrittenTime = eventTime;
+            lastWrittenTick = eventTick;
             return true;
         }
 
@@ -932,7 +1061,7 @@ public class OKD
             {
                 writer.Write(ev.Data);
             }
-            lastWrittenTime = eventTime;
+            lastWrittenTick = eventTick;
             return true;
         }
 
@@ -973,6 +1102,22 @@ public class OKD
         {
             writer.Write(buffer[i]);
         }
+    }
+
+    private static uint NormalizeTimeSignatureDenominator(uint denominator)
+    {
+        if (denominator < 1)
+        {
+            return 1;
+        }
+
+        uint value = 1;
+        while (value < denominator && value < 128)
+        {
+            value <<= 1;
+        }
+
+        return value;
     }
 
     private void ResetTG(byte port, byte id, byte mode)
