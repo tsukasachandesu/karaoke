@@ -71,10 +71,17 @@ jobs:
         run: dotnet test OKDPlayer.sln --configuration ${{ matrix.configuration }} --no-build
 
       - name: Publish
-        run: dotnet publish OKDPlayer.csproj --configuration ${{ matrix.configuration }} --no-build --output publish/${{ matrix.configuration }}
+        run: >
+          dotnet publish OKDPlayer.csproj
+          --configuration ${{ matrix.configuration }}
+          --runtime win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish/${{ matrix.configuration }}/win-x64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: OKDPlayer-${{ matrix.configuration }}
-          path: publish/${{ matrix.configuration }}
+          path: publish/${{ matrix.configuration }}/win-x64
