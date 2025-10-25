@@ -69,3 +69,12 @@ jobs:
 
       - name: Test
         run: dotnet test OKDPlayer.sln --configuration ${{ matrix.configuration }} --no-build
+
+      - name: Publish
+        run: dotnet publish OKDPlayer.csproj --configuration ${{ matrix.configuration }} --no-build --output publish/${{ matrix.configuration }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OKDPlayer-${{ matrix.configuration }}
+          path: publish/${{ matrix.configuration }}
