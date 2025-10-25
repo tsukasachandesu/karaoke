@@ -33,20 +33,25 @@ jobs:
       - name: Publish for ${{ matrix.target.rid }}
         run: >
           dotnet publish OKDPlayer.csproj
-          -c Release 
-          -r ${{ matrix.target.rid }} 
-          --self-contained true 
-          /p:PublishSingleFile=true 
-          /p:PublishTrimmed=true 
-          /p:AssemblyName=${{ matrix.target.output }} 
-          /p:DebugType=None 
+          -c Release
+          -r ${{ matrix.target.rid }}
+          --self-contained true
+          /p:PublishSingleFile=true
+          /p:PublishTrimmed=true
+          /p:AssemblyName=${{ matrix.target.output }}
+          /p:DebugType=None
           -o ./publish
+
+      - name: Archive published binaries
+        run: |
+          mkdir -p artifacts
+          zip -j "artifacts/${{ matrix.target.output }}.zip" ./publish/${{ matrix.target.output }}*
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-artifact-${{ matrix.target.rid }}
-          path: ./publish/${{ matrix.target.output }}* 
+          path: artifacts/${{ matrix.target.output }}.zip
 
 
   release:
@@ -63,3 +68,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ./artifacts/**/*
+          generate_release_notes: true
