@@ -18,6 +18,13 @@ namespace OKDPlayer
         private static string midiOutputFile = null;
         public class OKDPlayerCommandlineOptions
         {
+            public OKDPlayerCommandlineOptions()
+            {
+                midiDevIndexs = Array.Empty<int>();
+                inputOKDFile = string.Empty;
+                MidiOutputFile = string.Empty;
+            }
+
             [Option('m', "midi-devices", Required = false, HelpText = "Set midi playback devices as number, Ex: 1 2 3 4")]
             public IEnumerable<int> midiDevIndexs { get; set; }
 
