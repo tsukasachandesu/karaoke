@@ -38,6 +38,19 @@ A `key.bin` file is necessary to play scrambled OKD files. I do not provide this
   * **G Key:** Toggle Guide melody on/off (Not working some TGMode0 OKD)
   * **Number Keys (1-9):** Mute/Unmute Specific PTrack playback
 
+### Building a Windows release executable
+
+If you don't have the .NET SDK installed locally, use the helper script to download a local copy of the SDK and publish a self-contained Windows build:
+
+```bash
+scripts/publish_win64.sh
+```
+
+The resulting `OKDPlayer.exe` will be placed inside `publish/win-x64/` together with the required dependencies. The script also
+creates a ZIP archive (default: `release/OKDPlayer-win-x64.zip`) so you can easily store or distribute the executable. Use
+`scripts/publish_win64.sh --help` to see additional options, such as writing the archive to a custom directory or skipping the
+archive step entirely.
+
 ### Platform Support
 
   * **Windows:** Fully supported.
