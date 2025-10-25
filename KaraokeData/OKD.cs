@@ -1074,6 +1074,23 @@ public class OKD
             foreach (var entry in sortedEvents)
             {
                 PTrackAbsoluteTimeEvent ev = entry.Event;
+                byte statusType = (byte)(ev.Status & 0xF0);
+
+                if (statusType == 0xF0 && ev.Status != 0xF0 && ev.Status != 0xF7)
+                {
+                    string messageHex = BitConverter.ToString(ev.ToBytes()).Replace("-", " ");
+                    byte[] textBytes = Encoding.ASCII.GetBytes(messageHex);
+
+                    timedEvents.Add(new TimedTrackEvent(ev.AbsoluteTime, priority: 1, order: order++, writerAction: bw =>
+                    {
+                        bw.Write((byte)0xFF);
+                        bw.Write((byte)0x01);
+                        WriteVariableLengthQuantity(bw, (uint)textBytes.Length);
+                        bw.Write(textBytes);
+                    }));
+                    continue;
+                }
+
                 timedEvents.Add(new TimedTrackEvent(ev.AbsoluteTime, priority: 1, order: order++, writerAction: bw =>
                 {
                     WriteMidiEventData(bw, ev);
