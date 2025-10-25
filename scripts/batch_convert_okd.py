@@ -23,6 +23,7 @@ import logging
 import os
 import subprocess
 import sys
+from fnmatch import fnmatch
 from functools import partial
 from pathlib import Path
 from typing import Iterable, List, Sequence
@@ -71,14 +72,48 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def discover_okd_files(root: Path, pattern: str) -> List[Path]:
-    """Return a sorted list of OKD file paths matching *pattern* under *root*."""
+def discover_okd_files(root: Path, pattern: str, log_interval: int = 200) -> List[Path]:
+    """Return a sorted list of OKD file paths matching *pattern* under *root*.
+
+    The search can be expensive when the tree contains a large number of
+    directories.  To avoid the appearance of a frozen script we emit periodic
+    progress messages while traversing the file system.
+    """
+
     if not root.exists():
         raise FileNotFoundError(f"Root directory not found: {root}")
 
-    logging.debug("Scanning %s for pattern %s", root, pattern)
-    matches = [path for path in root.glob(f"**/{pattern}") if path.is_file()]
+    logging.info("Scanning %s for files matching %s", root, pattern)
+
+    matches: List[Path] = []
+    visited_dirs = 0
+
+    for dirpath, _, filenames in os.walk(root):
+        visited_dirs += 1
+
+        for filename in filenames:
+            if fnmatch(filename, pattern):
+                match = Path(dirpath) / filename
+                matches.append(match)
+                if len(matches) % 50 == 0:
+                    logging.info(
+                        "Scanning progress: %d matching file(s) found so far.",
+                        len(matches),
+                    )
+
+        if visited_dirs % max(1, log_interval) == 0:
+            logging.info(
+                "Scanning progress: visited %d directories, %d matching file(s) found.",
+                visited_dirs,
+                len(matches),
+            )
+
     matches.sort()
+    logging.info(
+        "Scanning complete: visited %d directories and found %d matching file(s).",
+        visited_dirs,
+        len(matches),
+    )
     return matches
 
 
